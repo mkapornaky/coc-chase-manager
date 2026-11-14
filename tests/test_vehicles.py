@@ -1,3 +1,5 @@
+import pytest
+
 from coc_chase.chase import Chase, Hazard, Participant
 from test_dice import FixedRng
 
@@ -210,3 +212,26 @@ def test_too_slow_check_ignores_passengers():
     chase = passenger_chase()  # Harvey MOV 14, passenger Hilda MOV 7
     chase.join(Participant("Biker", "pursuer", dex=50, mov=10, speed_value=50), 0, "success")
     assert chase.unable_to_join == ["Biker"]
+
+
+def stopped_at_truck():
+    chase = police_chase()
+    chase.pedal_to_the_metal("Police 1", 3)
+    assert chase.get("Police 1").pedal == 2
+    return chase
+
+
+@pytest.mark.parametrize("end", [
+    lambda c: c.damage_barrier("Police 1", 5),
+    lambda c: c.other_action("Police 1", "fires"),
+    lambda c: c.end_round(),
+    lambda c: c.remove_hazard(1),
+    lambda c: c.set_location("Police 1", 4),
+    lambda c: c.move("Police 1"),
+])
+def test_acceleration_ends_clear_pedal_state(end):
+    chase = stopped_at_truck()
+    chase.hazards[1] = Hazard("gate", kind="barrier", hp=20, max_hp=20)
+    end(chase)
+    assert chase.get("Police 1").pedal == 0
+    assert not any(b.startswith("pedal") for b in chase.badges("Police 1"))

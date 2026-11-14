@@ -301,6 +301,7 @@ class Chase:
     def set_location(self, name: str, location: int) -> None:
         """Keeper override: put a participant on any location."""
         self.get(name).location = location
+        self.get(name).pedal = 0
         self._carry(self.get(name))
         self._pad(location)
         self.log_event(f"{name} placed on {self.locations[location]}")
@@ -444,6 +445,7 @@ class Chase:
     def move(self, name: str) -> None:
         p = self.get(name)
         p.actions_left -= 1
+        p.pedal = 0
         self._advance(p)
         self.log_event(f"{name} moves → {self.locations[p.location]}")
 
@@ -523,6 +525,9 @@ class Chase:
     @mutation
     def remove_hazard(self, gap: int) -> None:
         hazard = self.hazards.pop(gap)
+        for p in self.participants:
+            if p.location == gap:
+                p.pedal = 0  # stopped in front of it: the acceleration is over
         self.log_event(f"Hazard {hazard.name} removed after {self.locations[gap]}")
 
     @mutation
@@ -637,6 +642,7 @@ class Chase:
         if p.is_passenger:
             p.passenger_action = p.passenger_action and not cost
             return ""
+        p.pedal = 0  # any other action ends a Pedal to the Metal acceleration
         p.actions_left -= cost
         if p.actions_left >= 0:
             return ""
@@ -690,3 +696,4 @@ class Chase:
         for p in self.participants:
             p.actions_left = self.movement_actions(p)
             p.passenger_action = p.is_passenger
+            p.pedal = 0
