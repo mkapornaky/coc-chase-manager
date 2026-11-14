@@ -37,6 +37,7 @@ SPEED_MOD = {"extreme": 1, "success": 0, "fail": -1}
 SPEED_FROM_LEVEL = {"critical": "extreme", "extreme": "extreme", "hard": "success",
                     "regular": "success", "failure": "fail", "fumble": "fail"}
 LEVELS = list(SPEED_FROM_LEVEL)  # best first
+PEDAL_DISTANCES = range(2, 6)  # Pedal to the Metal: 2-5 locations
 
 
 def success_level(roll: int, target: int) -> str:
@@ -92,6 +93,14 @@ class Participant:
     pedal_penalty: int = 0  # penalty dice on hazards during that acceleration
     navigated: bool = False  # a passenger navigated: next Pedal to the Metal has 1 penalty die less
     vehicle: str | None = None  # passenger in this vehicle: no speed roll, rides along, 1 action
+
+    @property
+    def is_vehicle(self) -> bool:
+        return self.build is not None
+
+    @property
+    def is_passenger(self) -> bool:
+        return self.vehicle is not None
 
     @property
     def adjusted_mov(self) -> int:
@@ -219,8 +228,8 @@ class Chase:
         slowest fleeing character are left behind (removed). The slowest pursuer starts on
         `start_location`, the slowest fleeing character `start_range` ahead of the foremost pursuer.
         """
-        pursuers = [p for p in self.participants if p.side == "pursuer" and not p.vehicle]
-        fleeing = [p for p in self.participants if p.side == "fleeing" and not p.vehicle]
+        pursuers = [p for p in self.participants if p.side == "pursuer" and not p.is_passenger]
+        fleeing = [p for p in self.participants if p.side == "fleeing" and not p.is_passenger]
         fastest_pursuer = max(p.adjusted_mov for p in pursuers)
         faster = [p.name for p in fleeing if p.adjusted_mov > fastest_pursuer]
         if len(faster) == len(fleeing):
@@ -235,7 +244,7 @@ class Chase:
             if p.adjusted_mov < slowest_fleeing:
                 self.participants.remove(p)
                 self.log_event(f"{p.name} is left behind")
-        pursuers = [p for p in self.participants if p.side == "pursuer" and not p.vehicle]
+        pursuers = [p for p in self.participants if p.side == "pursuer" and not p.is_passenger]
         slowest_pursuer = min(p.adjusted_mov for p in pursuers)
         for p in pursuers:
             p.location = start_location + p.adjusted_mov - slowest_pursuer
@@ -261,7 +270,7 @@ class Chase:
         """
         p = participant
         self.add(p)
-        if p.vehicle:  # no speed roll, never the slowest
+        if p.is_passenger:  # no speed roll, never the slowest
             p.actions_left = self.movement_actions(p)
             self.set_location(p.name, self.get(p.vehicle).location)
             return
@@ -311,8 +320,8 @@ class Chase:
 
     def badges(self, name: str) -> list[str]:
         p = self.get(name)
-        badges = [f"passenger in {p.vehicle}"] if p.vehicle else []
-        if p.build is not None:
+        badges = [f"passenger in {p.vehicle}"] if p.is_passenger else []
+        if p.is_vehicle:
             if p.build <= 0:
                 badges.append("undriveable")
             elif p.build <= p.max_build // 2:
@@ -320,6 +329,17 @@ class Chase:
         if p.pedal:
             badges.append(f"pedal to the metal: {_dice(p.pedal_penalty, 'penalty')}")
         return badges
+
+    def ready_to_establish(self) -> bool:
+        """Both sides present and every speed roll in (passengers make none)."""
+        sides = {p.side for p in self.participants if not p.is_passenger}
+        return sides == {"pursuer", "fleeing"} and all(
+            p.speed_result for p in self.participants if not p.is_passenger)
+
+    def targets(self, name: str) -> list[str]:
+        """Who `name` can attack or maneuver: everyone on the other side."""
+        side = self.get(name).side
+        return [p.name for p in self.participants if p.side != side]
 
     def same_location(self) -> list[int]:
         """Locations where a pursuer shares a location with a fleeing character."""
@@ -330,7 +350,7 @@ class Chase:
 
     def movement_actions(self, p: Participant) -> int:
         """Passengers: 0 movement actions, but their 1 action per turn is counted here."""
-        if p.vehicle:
+        if p.is_passenger:
             return 1
         return 1 + p.adjusted_mov - self.slowest_mov
 
@@ -564,7 +584,7 @@ class Chase:
         if lost is None:
             lost = self.roll(1, 3, label=f"{p.name} lost actions")
         text = f", −{lost} actions" if lost else ""
-        if damage and p.build is not None:
+        if damage and p.is_vehicle:
             p.build -= damage
             text += f", −{damage} build ({p.build})"
         elif damage and p.hp is not None:

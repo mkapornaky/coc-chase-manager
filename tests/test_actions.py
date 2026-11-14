@@ -64,3 +64,10 @@ def test_end_chase_stops_the_round_flow():
     assert chase.current_turn() is None
     chase.end_round()
     assert chase.round == 1
+
+
+def test_targets_are_participants_on_the_other_side():
+    from test_setup import apartment_chase
+    chase = apartment_chase()
+    assert chase.targets("Harvey") == ["Cultist A", "Cultist B", "Cultist C"]
+    assert chase.targets("Cultist A") == ["Harvey", "Brian", "Scott"]

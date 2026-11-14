@@ -153,3 +153,34 @@ def test_prep_file_keeps_vehicle_at_full_build_without_live_acceleration(tmp_pat
     p1, p2 = (loaded.get(n) for n in ("Police 1", "Police 2"))
     assert (p1.build, p1.max_build, p1.navigated) == (5, 5, False)
     assert (p2.pedal, p2.pedal_penalty) == (0, 0)
+
+
+def test_vehicle_and_passenger_properties():
+    chase = passenger_chase()
+    harvey, hilda = chase.get("Harvey"), chase.get("Hilda")
+    assert (harvey.is_vehicle, harvey.is_passenger) == (True, False)
+    assert (hilda.is_vehicle, hilda.is_passenger) == (False, True)
+
+
+def test_pedal_distances_are_2_to_5():
+    from coc_chase.chase import PEDAL_DISTANCES
+    assert list(PEDAL_DISTANCES) == [2, 3, 4, 5]
+
+
+def test_establish_ready_once_every_non_passenger_has_a_speed_result():
+    chase = Chase()
+    chase.add(car("Harvey", "fleeing"))
+    chase.add(Participant("Hilda", "fleeing", dex=60, mov=7, speed_value=0, vehicle="Harvey"))
+    chase.add(car("Police 1", "pursuer"))
+    assert not chase.ready_to_establish()
+    chase.set_speed_result("Harvey", "success")
+    assert not chase.ready_to_establish()
+    chase.set_speed_result("Police 1", "success")
+    assert chase.ready_to_establish()  # Hilda needs no speed roll
+
+
+def test_establish_not_ready_without_both_sides():
+    chase = Chase()
+    chase.add(car("Harvey", "fleeing"))
+    chase.set_speed_result("Harvey", "success")
+    assert not chase.ready_to_establish()
