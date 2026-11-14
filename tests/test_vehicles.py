@@ -93,7 +93,8 @@ def test_passenger_ignored_for_slowest_mov_rides_along_and_acts_once_in_dex_orde
     chase = passenger_chase()
     harvey, hilda = chase.get("Harvey"), chase.get("Hilda")
     assert chase.slowest_mov == 14
-    assert (harvey.actions_left, chase.get("Police 1").actions_left, hilda.actions_left) == (1, 2, 1)
+    assert (harvey.actions_left, chase.get("Police 1").actions_left, hilda.actions_left) == (1, 2, 0)
+    assert chase.movement_actions(hilda) == 0 and hilda.passenger_action
     assert hilda.location == harvey.location
     assert chase.badges("Hilda") == ["passenger in Harvey"]
     assert [p.name for p in chase.dex_order()] == ["Harvey", "Hilda", "Police 1"]
@@ -105,7 +106,7 @@ def test_passenger_ignored_for_slowest_mov_rides_along_and_acts_once_in_dex_orde
 def test_passenger_navigation_reduces_next_pedal_penalty_by_1_die():
     chase = passenger_chase()
     chase.navigate("Hilda", passed=True)
-    assert chase.get("Hilda").actions_left == 0
+    assert not chase.get("Hilda").passenger_action
     assert chase.log[-1] == "R1: Hilda navigates for Harvey: next Pedal to the Metal −1 penalty die"
     chase.pedal_to_the_metal("Harvey", 4)
     assert "(1 penalty die)" in chase.log[-1]
@@ -119,7 +120,7 @@ def test_passenger_joining_does_not_change_slowest_mov():
     chase.join(Participant("Hilda", "fleeing", dex=60, mov=7, speed_value=0, vehicle="Harvey"), 0)
     assert chase.slowest_mov == 14
     assert chase.get("Hilda").location == chase.get("Harvey").location
-    assert chase.get("Hilda").actions_left == 1
+    assert (chase.get("Hilda").actions_left, chase.get("Hilda").passenger_action) == (0, True)
     assert chase.get("Police 1").actions_left == 2
 
 
@@ -184,3 +185,28 @@ def test_establish_not_ready_without_both_sides():
     chase.add(car("Harvey", "fleeing"))
     chase.set_speed_result("Harvey", "success")
     assert not chase.ready_to_establish()
+
+
+def test_passenger_turn_ends_after_one_action_without_debt_and_returns_next_round():
+    chase = passenger_chase()
+    hilda = chase.get("Hilda")
+    chase.move("Harvey")
+    assert chase.current_turn() is hilda
+    chase.other_action("Hilda", "fires at the police")
+    assert (hilda.actions_left, hilda.debt, hilda.passenger_action) == (0, 0, False)
+    assert chase.current_turn() is chase.get("Police 1")
+    chase.end_round()
+    assert hilda.passenger_action and hilda.actions_left == 0
+
+
+def test_new_slowest_joiner_does_not_give_passengers_movement_actions():
+    chase = passenger_chase()
+    chase.join(car("Truck", "fleeing", mov=12), 0, "success")
+    assert chase.get("Police 1").actions_left == 4
+    assert chase.get("Hilda").actions_left == 0
+
+
+def test_too_slow_check_ignores_passengers():
+    chase = passenger_chase()  # Harvey MOV 14, passenger Hilda MOV 7
+    chase.join(Participant("Biker", "pursuer", dex=50, mov=10, speed_value=50), 0, "success")
+    assert chase.unable_to_join == ["Biker"]

@@ -200,6 +200,8 @@ def root() -> None:
                 ui.button("↑", on_click=lambda i=i: swap(i)).props("dense flat").set_enabled(i > 0)
                 hp = f" HP {p.hp}/{p.max_hp}" if p.hp is not None else ""
                 build = f" build {p.build}/{p.max_build}" if p.is_vehicle else ""
+                if p.is_passenger:
+                    build += f" action {'ready' if p.passenger_action else 'used'}"
                 ui.label(f"{p.name} DEX {p.dex} MOV {p.adjusted_mov} "
                          f"actions {p.actions_left}/{chase.movement_actions(p)} debt {p.debt}{hp}{build}")
                 for b in chase.badges(p.name):

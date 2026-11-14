@@ -93,6 +93,7 @@ class Participant:
     pedal_penalty: int = 0  # penalty dice on hazards during that acceleration
     navigated: bool = False  # a passenger navigated: next Pedal to the Metal has 1 penalty die less
     vehicle: str | None = None  # passenger in this vehicle: no speed roll, rides along, 1 action
+    passenger_action: bool = False  # passengers only: this round's one action is still unused
 
     @property
     def is_vehicle(self) -> bool:
@@ -273,14 +274,14 @@ class Chase:
         p = participant
         self.add(p)
         if p.is_passenger:  # no speed roll, never the slowest
-            p.actions_left = self.movement_actions(p)
+            p.actions_left, p.passenger_action = 0, True
             self.set_location(p.name, self.get(p.vehicle).location)
             return
         if speed_result is None:
             self.roll_speed(p.name)
         else:
             self.set_speed_result(p.name, speed_result)
-        fleeing = [o.adjusted_mov for o in self.participants if o.side == "fleeing"]
+        fleeing = [o.adjusted_mov for o in self.participants if o.side == "fleeing" and not o.is_passenger]
         if p.side == "pursuer" and fleeing and p.adjusted_mov < min(fleeing):
             self.participants.remove(p)
             self.unable_to_join.append(p.name)
@@ -288,7 +289,8 @@ class Chase:
             return
         if p.adjusted_mov < self.slowest_mov:
             for other in self.participants:
-                other.actions_left += self.slowest_mov - p.adjusted_mov
+                if not other.is_passenger:
+                    other.actions_left += self.slowest_mov - p.adjusted_mov
             self.slowest_mov = p.adjusted_mov
             self.log_event(f"{p.name} is the new slowest, movement actions recalculated")
         p.actions_left = self.movement_actions(p)
@@ -351,9 +353,9 @@ class Chase:
         return sorted(loc for loc, s in sides.items() if len(s) == 2)
 
     def movement_actions(self, p: Participant) -> int:
-        """Passengers: 0 movement actions, but their 1 action per turn is counted here."""
+        """Passengers: 0 movement actions (their 1 action per turn is `passenger_action`)."""
         if p.is_passenger:
-            return 1
+            return 0
         return 1 + p.adjusted_mov - self.slowest_mov
 
     def dex_order(self) -> list[Participant]:
@@ -401,7 +403,7 @@ class Chase:
     def current_turn(self) -> Participant | None:
         if self.ended:
             return None
-        return next((p for p in self.turn_order() if p.actions_left > 0 or p.pedal), None)
+        return next((p for p in self.turn_order() if p.actions_left > 0 or p.pedal or p.passenger_action), None)
 
     @mutation
     def delay(self, name: str) -> None:
@@ -598,7 +600,13 @@ class Chase:
         return lost, text
 
     def _spend(self, p: Participant, cost: int) -> str:
-        """Spend movement actions; whatever is not left becomes debt. Returns a log suffix."""
+        """Spend movement actions; whatever is not left becomes debt. Returns a log suffix.
+
+        A passenger instead uses up their one action this turn, never debt.
+        """
+        if p.is_passenger:
+            p.passenger_action = p.passenger_action and not cost
+            return ""
         p.actions_left -= cost
         if p.actions_left >= 0:
             return ""
@@ -651,3 +659,4 @@ class Chase:
     def _reset_actions(self) -> None:
         for p in self.participants:
             p.actions_left = self.movement_actions(p)
+            p.passenger_action = p.is_passenger

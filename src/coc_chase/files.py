@@ -7,7 +7,8 @@ from pathlib import Path
 from coc_chase.chase import FORMAT_VERSION, Chase, Hazard, Participant, mutation
 
 # Live state that never goes into a prep file.
-LIVE = ("speed_result", "location", "actions_left", "debt", "pedal", "pedal_penalty", "navigated")
+LIVE = ("speed_result", "location", "actions_left", "debt", "pedal", "pedal_penalty", "navigated",
+        "passenger_action")
 
 
 def _prep_participant(p: Participant) -> dict:
