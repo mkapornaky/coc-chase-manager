@@ -412,14 +412,20 @@ class Chase:
 
     @mutation
     def roll_dex_ties(self) -> None:
-        """Opposed DEX roll within each tied group: better result level first, then lower roll."""
-        # ponytail: equal level and roll keeps current order instead of rerolling
+        """Opposed DEX roll within each tied group: better result level first, then lower roll.
+
+        Identical results are rerolled; the reroll only orders those tied with each other.
+        """
         order = [p.name for p in self.dex_order()]
         for group in self.dex_ties():
-            results = {}
-            for name in group:
-                roll, level = self.roll_d100(self.get(name).dex, label=f"{name} opposed DEX")
-                results[name] = (LEVELS.index(level), roll)
+            results = {name: [] for name in group}
+            pending = group
+            while pending:
+                for name in pending:
+                    roll, level = self.roll_d100(self.get(name).dex, label=f"{name} opposed DEX")
+                    results[name].append((LEVELS.index(level), roll))
+                rolled = list(results.values())
+                pending = [n for n in group if rolled.count(results[n]) > 1]
             start = order.index(group[0])
             order[start:start + len(group)] = sorted(group, key=results.get)
         self.reorder(order)

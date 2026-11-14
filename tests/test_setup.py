@@ -129,3 +129,11 @@ def test_one_on_one_escape_ignores_passengers():
     chase.set_speed_result("Police", "success")
     chase.establish()
     assert chase.escaped == ["Harvey"]
+
+
+def test_identical_opposed_dex_results_are_rerolled_between_the_tied_only():
+    chase = apartment_chase()
+    # A and B both roll 30 (hard), C 05 (extreme); reroll: A 80 (failure), B 10 (hard)
+    chase.rng = FixedRng(0, 3, 0, 3, 5, 0, 0, 8, 0, 1)
+    chase.roll_dex_ties()
+    assert names(chase.dex_order())[3:] == ["Cultist C", "Cultist B", "Cultist A"]
