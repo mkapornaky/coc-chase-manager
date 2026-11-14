@@ -88,6 +88,28 @@ def root() -> None:
                 speed_value=int(speed.value), hp=whole(hp.value), build=whole(build.value),
                 vehicle=vehicle.value, notes=notes.value or ""), view.refresh()))
 
+    def participant_form():
+        """New-participant inputs. Returns a function giving the Participant, or None without a name."""
+        name = ui.input("Name")
+        side = ui.select(["pursuer", "fleeing"], value="pursuer", label="Side")
+        dex = ui.number("DEX", value=50, precision=0)
+        mov = ui.number("MOV", value=8, precision=0)
+        speed = ui.number("Speed roll value", value=50, precision=0)
+        hp = ui.number("HP (optional)", precision=0)
+        build = ui.number("Build (vehicle)", precision=0, min=1)
+        vehicle = ui.select([p.name for p in chase.participants if p.is_vehicle],
+                            label="Passenger in", clearable=True)
+
+        def make() -> Participant | None:
+            if not name.value:
+                return None
+            max_hp = int(hp.value) if hp.value is not None else None
+            max_build = int(build.value) if build.value is not None else None
+            return Participant(name.value, side.value, int(dex.value), int(mov.value), int(speed.value),
+                               hp=max_hp, max_hp=max_hp, build=max_build, max_build=max_build,
+                               vehicle=vehicle.value)
+        return make
+
     def setup() -> None:
         ui.label("Participants").classes("text-h6")
         for p in chase.participants:
@@ -101,26 +123,8 @@ def root() -> None:
                           on_change=lambda e, n=p.name: (chase.set_speed_result(n, e.value), view.refresh()))
                 ui.button("Roll (NPC)", on_click=lambda n=p.name: (chase.roll_speed(n), view.refresh()))
         with ui.row().classes("items-end"):
-            name = ui.input("Name")
-            side = ui.select(["pursuer", "fleeing"], value="pursuer", label="Side")
-            dex = ui.number("DEX", value=50, precision=0)
-            mov = ui.number("MOV", value=8, precision=0)
-            speed = ui.number("Speed roll value", value=50, precision=0)
-            hp = ui.number("HP (optional)", precision=0)
-            build = ui.number("Build (vehicle)", precision=0, min=1)
-            vehicle = ui.select([p.name for p in chase.participants if p.is_vehicle],
-                                label="Passenger in", clearable=True)
-
-            def add() -> None:
-                if name.value:
-                    max_hp = int(hp.value) if hp.value is not None else None
-                    max_build = int(build.value) if build.value is not None else None
-                    chase.add(Participant(name.value, side.value, int(dex.value),
-                                          int(mov.value), int(speed.value), hp=max_hp, max_hp=max_hp,
-                                          build=max_build, max_build=max_build, vehicle=vehicle.value))
-                    view.refresh()
-
-            ui.button("Add", on_click=add)
+            new = participant_form()
+            ui.button("Add", on_click=lambda: new() and (chase.add(new()), view.refresh()))
         for n in chase.escaped:
             ui.label(f"{n} escapes: no chase is played.").classes("text-positive text-h6")
 
@@ -131,28 +135,14 @@ def root() -> None:
             chase.establish(start_range.value, int(start_location.value) - 1)
             view.refresh()
 
+        track()
         with ui.row().classes("items-end"):
             start_range = ui.select({2: "Range 2", 1: "Range 1"}, value=2, label="Starting range")
             start_location = ui.number("Rearmost pursuer on location", value=1, precision=0, min=1)
             ui.button("Establish chase", on_click=establish)
 
-    def running() -> None:
-        turn = chase.current_turn()
-        ui.label(f"Round {chase.round}").classes("text-h6")
-        if chase.ended:
-            ui.label("Chase over").classes("text-negative text-h6")
-        with ui.row().classes("items-center"):
-            caller = {None: "either side", "keeper": "Keeper", "players": "players"}[chase.sudden_caller]
-            ui.label(f"Next sudden hazard call: {caller}")
-            for side in ("keeper", "players"):
-                ui.button(f"{side.capitalize()} calls", on_click=lambda s=side: (
-                    chase.call_sudden_hazard(s), view.refresh())).props("dense")
-        if chase.may_escape:
-            ui.label(f"May escape: {', '.join(chase.may_escape)}").classes("text-positive")
-        for group in chase.dex_ties():
-            with ui.row().classes("items-center"):
-                ui.label(f"DEX tie: {', '.join(group)}").classes("text-warning")
-                ui.button("Opposed DEX roll", on_click=lambda: (chase.roll_dex_ties(), view.refresh()))
+    def track() -> None:
+        """Locations, hazards and their editors: in setup for prep, and while running."""
         contact = chase.same_location()
         with ui.row().classes("no-wrap overflow-x-auto w-full"):
             for i, loc in enumerate(chase.locations):
@@ -175,7 +165,7 @@ def root() -> None:
                         "self-center").tooltip(f"{h.kind}: {h.skill} {h.difficulty} {h.notes}")
         with ui.row().classes("items-end"):
             gap = ui.select({i: f"after {loc}" for i, loc in enumerate(chase.locations)},
-                            value=0, label="Gap")
+                            value=0 if chase.locations else None, label="Gap")
             h_name = ui.input("Hazard")
             h_kind = ui.select(["hazard", "barrier"], value="hazard", label="Type")
             h_skill = ui.input("Skill(s)")
@@ -184,7 +174,7 @@ def root() -> None:
             h_notes = ui.input("Notes")
 
             def place() -> None:
-                if h_name.value:
+                if h_name.value and gap.value is not None:
                     hp = int(h_hp.value) if h_kind.value == "barrier" and h_hp.value else None
                     chase.add_hazard(gap.value, Hazard(h_name.value, h_skill.value, h_diff.value,
                                                        h_notes.value, h_kind.value, hp, hp))
@@ -195,19 +185,38 @@ def root() -> None:
                 chase.remove_hazard(gap.value), view.refresh()))
             env = ui.select({0: "normal", 1: "quiet (bonus)", -1: "hazardous (penalty)"},
                             value=0, label="Environment")
-            ui.button("Roll random hazard", on_click=lambda: (
+            ui.button("Roll random hazard", on_click=lambda: gap.value is not None and (
                 chase.roll_random_hazard(gap.value, env.value), view.refresh()))
         with ui.row().classes("items-end"):
-            loc_i = ui.select({i: loc for i, loc in enumerate(chase.locations)}, value=0,
-                              label="Location")
+            ends = len(chase.locations)
+            loc_i = ui.select({**dict(enumerate(chase.locations)), ends: "(end)"}, value=0, label="Location")
             loc_name = ui.input("Name")
             loc_desc = ui.input("Description")
-            ui.button("Edit", on_click=lambda: loc_name.value and (chase.edit_location(
+            ui.button("Edit", on_click=lambda: loc_name.value and loc_i.value < ends and (chase.edit_location(
                 loc_i.value, loc_name.value, loc_desc.value), view.refresh()))
             ui.button("Insert before", on_click=lambda: (chase.add_location(
                 loc_i.value, loc_name.value or "", loc_desc.value or ""), view.refresh()))
-            ui.button("Remove", on_click=lambda: len(chase.locations) > 1 and (
+            ui.button("Remove", on_click=lambda: ends > 1 and loc_i.value < ends and (
                 chase.remove_location(loc_i.value), view.refresh()))
+
+    def running() -> None:
+        turn = chase.current_turn()
+        ui.label(f"Round {chase.round}").classes("text-h6")
+        if chase.ended:
+            ui.label("Chase over").classes("text-negative text-h6")
+        with ui.row().classes("items-center"):
+            caller = {None: "either side", "keeper": "Keeper", "players": "players"}[chase.sudden_caller]
+            ui.label(f"Next sudden hazard call: {caller}")
+            for side in ("keeper", "players"):
+                ui.button(f"{side.capitalize()} calls", on_click=lambda s=side: (
+                    chase.call_sudden_hazard(s), view.refresh())).props("dense")
+        if chase.may_escape:
+            ui.label(f"May escape: {', '.join(chase.may_escape)}").classes("text-positive")
+        for group in chase.dex_ties():
+            with ui.row().classes("items-center"):
+                ui.label(f"DEX tie: {', '.join(group)}").classes("text-warning")
+                ui.button("Opposed DEX roll", on_click=lambda: (chase.roll_dex_ties(), view.refresh()))
+        track()
         ui.label("DEX order").classes("text-h6")
         order = [p.name for p in chase.dex_order()]
 
@@ -254,17 +263,12 @@ def root() -> None:
         if chase.unable_to_join:
             ui.label(f"Too slow to join: {', '.join(chase.unable_to_join)}").classes("text-warning")
         with ui.row().classes("items-end"):
-            name = ui.input("Name")
-            side = ui.select(["pursuer", "fleeing"], value="pursuer", label="Side")
-            dex = ui.number("DEX", value=50, precision=0)
-            mov = ui.number("MOV", value=8, precision=0)
-            speed = ui.number("Speed roll value", value=50, precision=0)
+            new = participant_form()
             result = ui.select({"npc": "NPC roll", "extreme": "extreme", "success": "success", "fail": "fail"},
                                value="npc", label="Speed result")
             location = ui.number("Location", value=1, precision=0, min=1)
-            ui.button("Join", on_click=lambda: name.value and (chase.join(
-                Participant(name.value, side.value, int(dex.value), int(mov.value), int(speed.value)),
-                int(location.value) - 1, None if result.value == "npc" else result.value), view.refresh()))
+            ui.button("Join", on_click=lambda: new() and (chase.join(
+                new(), int(location.value) - 1, None if result.value == "npc" else result.value), view.refresh()))
 
     def other_actions(p: Participant) -> None:
         others = chase.targets(p.name)
