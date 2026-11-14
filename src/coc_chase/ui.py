@@ -87,6 +87,8 @@ def root() -> None:
             for i, loc in enumerate(chase.locations):
                 with ui.card().classes("min-w-32"):
                     ui.label(loc).classes("text-bold")
+                    if i in chase.descriptions:
+                        ui.label(chase.descriptions[i]).classes("text-caption")
                     for p in chase.participants:
                         if p.location == i:
                             color = "red" if p.side == "pursuer" else "blue"
@@ -94,17 +96,45 @@ def root() -> None:
                                     color=color, text_color="white")
                 if i in chase.hazards:  # between card i and i+1
                     h = chase.hazards[i]
-                    ui.chip(h.name, color="orange").classes("self-center").tooltip(
-                        f"{h.skill} {h.difficulty} {h.notes}")
+                    barrier = h.kind == "barrier"
+                    label = f"{h.name} {h.hp}/{h.max_hp} HP" if barrier else h.name
+                    ui.chip(label, color="brown" if barrier else "orange").classes(
+                        "self-center").tooltip(f"{h.kind}: {h.skill} {h.difficulty} {h.notes}")
         with ui.row().classes("items-end"):
             gap = ui.select({i: f"after {loc}" for i, loc in enumerate(chase.locations)},
                             value=0, label="Gap")
             h_name = ui.input("Hazard")
+            h_kind = ui.select(["hazard", "barrier"], value="hazard", label="Type")
             h_skill = ui.input("Skill(s)")
             h_diff = ui.select(["regular", "hard", "extreme"], value="regular", label="Difficulty")
+            h_hp = ui.number("Barrier HP", precision=0, min=1)
             h_notes = ui.input("Notes")
-            ui.button("Add hazard", on_click=lambda: h_name.value and (chase.add_hazard(
-                gap.value, Hazard(h_name.value, h_skill.value, h_diff.value, h_notes.value)), view.refresh()))
+
+            def place() -> None:
+                if h_name.value:
+                    hp = int(h_hp.value) if h_kind.value == "barrier" and h_hp.value else None
+                    chase.add_hazard(gap.value, Hazard(h_name.value, h_skill.value, h_diff.value,
+                                                       h_notes.value, h_kind.value, hp, hp))
+                    view.refresh()
+
+            ui.button("Set hazard", on_click=place)
+            ui.button("Remove hazard", on_click=lambda: gap.value in chase.hazards and (
+                chase.remove_hazard(gap.value), view.refresh()))
+            env = ui.select({0: "normal", 1: "quiet (bonus)", -1: "hazardous (penalty)"},
+                            value=0, label="Environment")
+            ui.button("Roll random hazard", on_click=lambda: (
+                chase.roll_random_hazard(gap.value, env.value), view.refresh()))
+        with ui.row().classes("items-end"):
+            loc_i = ui.select({i: loc for i, loc in enumerate(chase.locations)}, value=0,
+                              label="Location")
+            loc_name = ui.input("Name")
+            loc_desc = ui.input("Description")
+            ui.button("Edit", on_click=lambda: loc_name.value and (chase.edit_location(
+                loc_i.value, loc_name.value, loc_desc.value), view.refresh()))
+            ui.button("Insert before", on_click=lambda: (chase.add_location(
+                loc_i.value, loc_name.value or "", loc_desc.value or ""), view.refresh()))
+            ui.button("Remove", on_click=lambda: len(chase.locations) > 1 and (
+                chase.remove_location(loc_i.value), view.refresh()))
         ui.label("DEX order").classes("text-h6")
         for p in chase.dex_order():
             style = "bg-yellow-2" if p is turn else ""
@@ -121,7 +151,12 @@ def root() -> None:
         if h is None:
             ui.button("Move", on_click=lambda: (chase.move(p.name), view.refresh()))
             return
-        ui.label(f"Hazard {h.name}: {h.skill} ({h.difficulty}) {h.notes}").classes("text-orange")
+        ui.label(f"{h.kind.capitalize()} {h.name}: {h.skill} ({h.difficulty}) {h.notes}").classes(
+            "text-orange")
+        if h.kind == "barrier":
+            smash = ui.number("Damage to barrier", value=0, precision=0, min=0)
+            ui.button("Smash", on_click=lambda: (
+                chase.damage_barrier(p.name, int(smash.value or 0)), view.refresh()))
         bonus = ui.select({0: "no bonus", 1: "1 bonus die", 2: "2 bonus dice"}, value=0,
                           label="Cautious")
         lost = ui.number("Lost (blank = 1D3)", precision=0, min=1, max=3)

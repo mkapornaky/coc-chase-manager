@@ -63,6 +63,9 @@ class Hazard:
     skill: str = ""  # suggested skill(s), free text
     difficulty: str = "regular"  # "regular" / "hard" / "extreme"
     notes: str = ""
+    kind: str = "hazard"  # "hazard" or "barrier" (blocks until passed or broken)
+    hp: int | None = None  # barriers only
+    max_hp: int | None = None
 
 
 @dataclass
@@ -88,6 +91,7 @@ class Participant:
 class Chase:
     participants: list[Participant] = field(default_factory=list)
     locations: list[str] = field(default_factory=list)
+    descriptions: dict[int, str] = field(default_factory=dict)  # location index -> read-aloud text
     hazards: dict[int, Hazard] = field(default_factory=dict)  # gap i = between location i and i+1
     escaped: list[str] = field(default_factory=list)
     round: int = 0  # 0 = not established yet
@@ -111,6 +115,7 @@ class Chase:
             raise ValueError("unsupported chase file version")
         data["participants"] = [Participant(**p) for p in data["participants"]]
         data["hazards"] = {int(i): Hazard(**h) for i, h in data["hazards"].items()}
+        data["descriptions"] = {int(i): d for i, d in data["descriptions"].items()}
         return cls(**data)
 
     @classmethod
@@ -148,13 +153,17 @@ class Chase:
     @mutation
     def roll_d100(self, target: int, bonus: int = 0, label: str = "") -> tuple[int, str]:
         """D100 vs target. bonus > 0: that many bonus dice, < 0: penalty dice (max 2). Logged."""
-        units = self.rng.randint(0, 9)
-        rolls = [(self.rng.randint(0, 9) * 10 + units) or 100 for _ in range(1 + abs(bonus))]
-        result = min(rolls) if bonus >= 0 else max(rolls)
+        result = self._d100(bonus)
         level = success_level(result, target)
         dice = f" ({abs(bonus)} {'bonus' if bonus > 0 else 'penalty'})" if bonus else ""
         self.log_event(f"{label + ' ' if label else ''}D100 vs {target}{dice}: {result} {level}")
         return result, level
+
+    def _d100(self, bonus: int = 0) -> int:
+        """Unlogged D100 with bonus (> 0) or penalty (< 0) dice."""
+        units = self.rng.randint(0, 9)
+        rolls = [(self.rng.randint(0, 9) * 10 + units) or 100 for _ in range(1 + abs(bonus))]
+        return min(rolls) if bonus >= 0 else max(rolls)
 
     @mutation
     def roll_speed(self, name: str) -> None:
@@ -223,6 +232,65 @@ class Chase:
         self.hazards[gap] = hazard
         self.log_event(f"Hazard {hazard.name} placed after {self.locations[gap]}")
 
+    @mutation
+    def roll_random_hazard(self, gap: int, bonus: int = 0) -> None:
+        """D100 for the gap: 01-59 clear (empties it), 60+ regular, 85+ hard, 96+ extreme.
+
+        bonus = 1 for a quiet environment, -1 for an especially hazardous one.
+        """
+        roll = self._d100(bonus)
+        difficulty = ("extreme" if roll >= 96 else "hard" if roll >= 85
+                      else "regular" if roll >= 60 else None)
+        if difficulty:
+            self.hazards[gap] = Hazard("random hazard", difficulty=difficulty)
+        else:
+            self.hazards.pop(gap, None)
+        dice = f" ({abs(bonus)} {'bonus' if bonus > 0 else 'penalty'})" if bonus else ""
+        self.log_event(f"Random hazard after {self.locations[gap]}{dice} D100: {roll} {difficulty or 'clear'}")
+
+    @mutation
+    def remove_hazard(self, gap: int) -> None:
+        hazard = self.hazards.pop(gap)
+        self.log_event(f"Hazard {hazard.name} removed after {self.locations[gap]}")
+
+    @mutation
+    def add_location(self, index: int, name: str = "", description: str = "") -> None:
+        """Insert a location before `index`; everything from `index` on shifts one along."""
+        self._shift(index, 1)
+        self.locations.insert(index, name)
+        if description:
+            self.descriptions[index] = description
+        self.log_event(f"Location {name or index + 1} added")
+
+    @mutation
+    def edit_location(self, index: int, name: str, description: str = "") -> None:
+        self.locations[index] = name
+        self.descriptions.pop(index, None)
+        if description:
+            self.descriptions[index] = description
+        self.log_event(f"Location {index + 1} is now {name}")
+
+    @mutation
+    def remove_location(self, index: int) -> None:
+        """Drop a location and the hazard after it. Participants on it stay on the index (the next one)."""
+        name = self.locations.pop(index)
+        self.descriptions.pop(index, None)
+        self.hazards.pop(index, None)
+        self._shift(index + 1, -1)
+        for p in self.participants:
+            p.location = min(p.location, len(self.locations) - 1)
+        self.log_event(f"Location {name} removed")
+
+    def _shift(self, start: int, delta: int) -> None:
+        """Move participants, descriptions and hazards at index >= start by delta."""
+        for p in self.participants:
+            if p.location >= start:
+                p.location += delta
+        for d in (self.descriptions, self.hazards):
+            moved = {i + delta if i >= start else i: v for i, v in d.items()}
+            d.clear()
+            d.update(moved)
+
     def hazard_ahead(self, name: str) -> Hazard | None:
         return self.hazards.get(self.get(name).location)
 
@@ -232,20 +300,25 @@ class Chase:
         """Cross the hazard ahead: 1 movement action plus `bonus` cautious bonus dice (max 2).
 
         On a fail, `lost` movement actions (None = roll 1D3) and optional HP damage.
-        Actions spent beyond what is left become debt. Moves on to the next location either way.
+        Actions spent beyond what is left become debt. Moves on to the next location either way,
+        except a failed barrier: no 1D3 by default, and the participant stays put.
         """
         p = self.get(name)
         hazard = self.hazard_ahead(name)
         bonus = min(bonus, 2)
         cost = 1 + bonus
-        text = f"{name} {'passes' if passed else 'fails'} hazard {hazard.name}"
+        blocked = hazard.kind == "barrier" and not passed
+        text = f"{name} {'passes' if passed else 'fails'} {hazard.kind} {hazard.name}"
         if bonus:
             text += f" ({bonus} bonus {'die' if bonus == 1 else 'dice'})"
+        if blocked and lost is None:
+            lost = 0
         if not passed:
             if lost is None:
                 lost = self.roll(1, 3, label=f"{name} lost actions")
-            cost += lost
-            text += f", −{lost} actions"
+            if lost:
+                cost += lost
+                text += f", −{lost} actions"
             if damage and p.hp is not None:
                 p.hp -= damage
                 text += f", −{damage} HP ({p.hp})"
@@ -255,7 +328,22 @@ class Chase:
             p.actions_left = 0
             text += f", debt {p.debt}"
         self.log_event(text)
-        self._advance(p)
+        if not blocked:
+            self._advance(p)
+
+    @mutation
+    def damage_barrier(self, name: str, damage: int) -> None:
+        """Spend 1 movement action smashing the barrier ahead. At 0 HP it is gone; the participant stays."""
+        p = self.get(name)
+        gap = p.location
+        barrier = self.hazards[gap]
+        p.actions_left -= 1
+        barrier.hp = max(0, barrier.hp - damage)
+        text = f"{name} deals {damage} damage to barrier {barrier.name} ({barrier.hp}/{barrier.max_hp} HP)"
+        if barrier.hp == 0:
+            del self.hazards[gap]
+            text += ", broken"
+        self.log_event(text)
 
     @mutation
     def end_round(self) -> None:
