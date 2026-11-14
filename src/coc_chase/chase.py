@@ -36,6 +36,7 @@ SPEED_MOD = {"extreme": 1, "success": 0, "fail": -1}
 # D100 result level -> speed result
 SPEED_FROM_LEVEL = {"critical": "extreme", "extreme": "extreme", "hard": "success",
                     "regular": "success", "failure": "fail", "fumble": "fail"}
+LEVELS = list(SPEED_FROM_LEVEL)  # best first
 
 
 def success_level(roll: int, target: int) -> str:
@@ -90,6 +91,8 @@ class Chase:
     locations: list[str] = field(default_factory=list)
     hazards: dict[int, Hazard] = field(default_factory=dict)  # gap i = between location i and i+1
     escaped: list[str] = field(default_factory=list)
+    may_escape: list[str] = field(default_factory=list)
+    order: list[str] = field(default_factory=list)  # Keeper turn order; empty = by DEX
     round: int = 0  # 0 = not established yet
     slowest_mov: int = 0
     delayed: list[str] = field(default_factory=list)  # this round only, acting after everyone else
@@ -181,29 +184,104 @@ class Chase:
         self.log_event(f"{name} speed roll {result}, MOV {p.adjusted_mov}")
 
     @mutation
-    def establish(self, start_range: int = 2) -> None:
-        """One-on-one: escape check, or place pursuer `start_range` behind and start round 1."""
-        # ponytail: one-on-one only; multi-participant placement/elimination is ticket 06
-        fastest_pursuer = max(p.adjusted_mov for p in self.participants if p.side == "pursuer")
-        self.escaped = [p.name for p in self.participants
-                        if p.side == "fleeing" and p.adjusted_mov > fastest_pursuer]
-        if self.escaped:
-            self.log_event(f"{', '.join(self.escaped)} escapes, no chase is played")
+    def establish(self, start_range: int = 2, start_location: int = 0) -> None:
+        """Eliminate, place, compute movement actions and start round 1 (rulebook p. 146).
+
+        Every fleeing character faster than every pursuer: they escape, no chase is played.
+        Otherwise faster ones are flagged in `may_escape`, and pursuers slower than the
+        slowest fleeing character are left behind (removed). The slowest pursuer starts on
+        `start_location`, the slowest fleeing character `start_range` ahead of the foremost pursuer.
+        """
+        pursuers = [p for p in self.participants if p.side == "pursuer"]
+        fleeing = [p for p in self.participants if p.side == "fleeing"]
+        fastest_pursuer = max(p.adjusted_mov for p in pursuers)
+        faster = [p.name for p in fleeing if p.adjusted_mov > fastest_pursuer]
+        if len(faster) == len(fleeing):
+            self.escaped = faster
+            self.log_event(f"{', '.join(faster)} escapes, no chase is played")
             return
-        for p in self.participants:
-            p.location = start_range if p.side == "fleeing" else 0
-        self.locations = [f"Location {i + 1}" for i in range(start_range + 2)]
+        self.may_escape = faster
+        if faster:
+            self.log_event(f"{', '.join(faster)} may escape")
+        slowest_fleeing = min(p.adjusted_mov for p in fleeing)
+        for p in pursuers:
+            if p.adjusted_mov < slowest_fleeing:
+                self.participants.remove(p)
+                self.log_event(f"{p.name} is left behind")
+        pursuers = [p for p in self.participants if p.side == "pursuer"]
+        slowest_pursuer = min(p.adjusted_mov for p in pursuers)
+        for p in pursuers:
+            p.location = start_location + p.adjusted_mov - slowest_pursuer
+        front = start_location + fastest_pursuer - slowest_pursuer + start_range
+        for p in fleeing:
+            p.location = front + p.adjusted_mov - slowest_fleeing
+        last = max(p.location for p in self.participants) + 1
+        self.locations += [f"Location {i + 1}" for i in range(len(self.locations), last + 1)]
         # Stored, not derived: leaving the chase must not recalculate movement actions.
         self.slowest_mov = min(p.adjusted_mov for p in self.participants)
         self.round = 1
         self._reset_actions()
         self.log_event(f"Chase established, range {start_range}")
 
+    @mutation
+    def set_location(self, name: str, location: int) -> None:
+        """Keeper override: put a participant on any location."""
+        self.get(name).location = location
+        self.locations += [f"Location {i + 1}" for i in range(len(self.locations), location + 1)]
+        self.log_event(f"{name} placed on {self.locations[location]}")
+
+    @mutation
+    def set_actions(self, name: str, actions: int) -> None:
+        """Keeper override: movement actions left this round."""
+        self.get(name).actions_left = actions
+        self.log_event(f"{name} movement actions set to {actions}")
+
+    def same_location(self) -> list[int]:
+        """Locations where a pursuer shares a location with a fleeing character."""
+        sides: dict[int, set[str]] = {}
+        for p in self.participants:
+            sides.setdefault(p.location, set()).add(p.side)
+        return sorted(loc for loc, s in sides.items() if len(s) == 2)
+
     def movement_actions(self, p: Participant) -> int:
         return 1 + p.adjusted_mov - self.slowest_mov
 
     def dex_order(self) -> list[Participant]:
-        return sorted(self.participants, key=lambda p: p.dex, reverse=True)
+        """Highest DEX first, unless the Keeper or an opposed DEX roll set `order`.
+
+        Names missing from `order` (e.g. later joiners) go after it, by DEX.
+        """
+        rank = {name: i for i, name in enumerate(self.order)}
+        return sorted(self.participants, key=lambda p: (rank.get(p.name, len(rank)), -p.dex))
+
+    def dex_ties(self) -> list[list[str]]:
+        """Groups of names sharing a DEX, until an order is set (by reorder or roll_dex_ties)."""
+        if self.order:
+            return []
+        groups: dict[int, list[str]] = {}
+        for p in self.dex_order():
+            groups.setdefault(p.dex, []).append(p.name)
+        return [g for g in groups.values() if len(g) > 1]
+
+    @mutation
+    def reorder(self, names: list[str]) -> None:
+        """Keeper sets the turn order (resolves DEX ties, or overrides DEX outright)."""
+        self.order = list(names)
+        self.log_event(f"Order set: {', '.join(names)}")
+
+    @mutation
+    def roll_dex_ties(self) -> None:
+        """Opposed DEX roll within each tied group: better result level first, then lower roll."""
+        # ponytail: equal level and roll keeps current order instead of rerolling
+        order = [p.name for p in self.dex_order()]
+        for group in self.dex_ties():
+            results = {}
+            for name in group:
+                roll, level = self.roll_d100(self.get(name).dex, label=f"{name} opposed DEX")
+                results[name] = (LEVELS.index(level), roll)
+            start = order.index(group[0])
+            order[start:start + len(group)] = sorted(group, key=results.get)
+        self.reorder(order)
 
     def turn_order(self) -> list[Participant]:
         """DEX order with this round's delayed participants moved to the end, latest delay last."""

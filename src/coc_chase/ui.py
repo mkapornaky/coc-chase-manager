@@ -75,18 +75,30 @@ def root() -> None:
             if any(p.speed_result is None for p in chase.participants):
                 ui.notify("Enter every speed roll result first")
                 return
-            chase.establish()
+            chase.establish(start_range.value, int(start_location.value) - 1)
             view.refresh()
 
-        ui.button("Establish chase", on_click=establish)
+        with ui.row().classes("items-end"):
+            start_range = ui.select({2: "Range 2", 1: "Range 1"}, value=2, label="Starting range")
+            start_location = ui.number("Rearmost pursuer on location", value=1, precision=0, min=1)
+            ui.button("Establish chase", on_click=establish)
 
     def running() -> None:
         turn = chase.current_turn()
         ui.label(f"Round {chase.round}").classes("text-h6")
+        if chase.may_escape:
+            ui.label(f"May escape: {', '.join(chase.may_escape)}").classes("text-positive")
+        for group in chase.dex_ties():
+            with ui.row().classes("items-center"):
+                ui.label(f"DEX tie: {', '.join(group)}").classes("text-warning")
+                ui.button("Opposed DEX roll", on_click=lambda: (chase.roll_dex_ties(), view.refresh()))
+        contact = chase.same_location()
         with ui.row().classes("no-wrap overflow-x-auto w-full"):
             for i, loc in enumerate(chase.locations):
                 with ui.card().classes("min-w-32"):
                     ui.label(loc).classes("text-bold")
+                    if i in contact:
+                        ui.badge("Same location", color="orange")
                     for p in chase.participants:
                         if p.location == i:
                             color = "red" if p.side == "pursuer" else "blue"
@@ -106,12 +118,24 @@ def root() -> None:
             ui.button("Add hazard", on_click=lambda: h_name.value and (chase.add_hazard(
                 gap.value, Hazard(h_name.value, h_skill.value, h_diff.value, h_notes.value)), view.refresh()))
         ui.label("DEX order").classes("text-h6")
-        for p in chase.dex_order():
+        order = [p.name for p in chase.dex_order()]
+
+        def swap(i: int) -> None:
+            order[i - 1], order[i] = order[i], order[i - 1]
+            chase.reorder(order)
+            view.refresh()
+
+        for i, p in enumerate(chase.dex_order()):
             style = "bg-yellow-2" if p is turn else ""
             with ui.row().classes(f"items-center {style}"):
+                ui.button("↑", on_click=lambda i=i: swap(i)).props("dense flat").set_enabled(i > 0)
                 hp = f" HP {p.hp}/{p.max_hp}" if p.hp is not None else ""
                 ui.label(f"{p.name} DEX {p.dex} MOV {p.adjusted_mov} "
                          f"actions {p.actions_left}/{chase.movement_actions(p)} debt {p.debt}{hp}")
+                ui.number("Location", value=p.location + 1, precision=0, min=1).on(
+                    "change", lambda e, n=p.name: (chase.set_location(n, int(e.sender.value) - 1), view.refresh()))
+                ui.number("Actions", value=p.actions_left, precision=0, min=0).on(
+                    "change", lambda e, n=p.name: (chase.set_actions(n, int(e.sender.value)), view.refresh()))
                 if p is turn:
                     hazard_or_move(p)
         ui.button("End round", on_click=lambda: (chase.end_round(), view.refresh()))
