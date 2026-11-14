@@ -1,13 +1,14 @@
 """Thin NiceGUI layer: renders a Chase and calls its operations. No rules here."""
 
 import argparse
+from pathlib import Path
 
 from nicegui import ui
 
 from coc_chase.chase import Chase, Participant
 
 # ponytail: one global chase per process; the Keeper is the only user
-chase = Chase()
+chase = Chase.load(Path("autosave.json"))
 
 
 def root() -> None:
@@ -17,6 +18,11 @@ def root() -> None:
             setup()
         else:
             running()
+        ui.button("Undo", on_click=lambda: (chase.undo(), view.refresh()))
+        ui.label("Event log").classes("text-h6")
+        with ui.column().classes("gap-0"):
+            for line in reversed(chase.log):
+                ui.label(line)
 
     def setup() -> None:
         ui.label("Participants").classes("text-h6")
@@ -24,7 +30,7 @@ def root() -> None:
             with ui.row().classes("items-center"):
                 ui.label(f"{p.name} ({p.side}) DEX {p.dex} MOV {p.mov} speed {p.speed_value}")
                 ui.toggle(["extreme", "success", "fail"], value=p.speed_result,
-                          on_change=lambda e, n=p.name: chase.set_speed_result(n, e.value))
+                          on_change=lambda e, n=p.name: (chase.set_speed_result(n, e.value), view.refresh()))
         with ui.row().classes("items-end"):
             name = ui.input("Name")
             side = ui.select(["pursuer", "fleeing"], value="pursuer", label="Side")

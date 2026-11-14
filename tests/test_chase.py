@@ -1,3 +1,5 @@
+import json
+
 from coc_chase.chase import Chase, Participant
 
 
@@ -64,3 +66,48 @@ def test_chase_module_has_no_ui_imports():
     import coc_chase.chase as module
     from pathlib import Path
     assert "nicegui" not in Path(module.__file__).read_text()
+
+
+def test_json_round_trip_gives_equal_state():
+    chase = harvey_vs_farmer("fail", "fail")
+    chase.move("Harvey")
+    data = json.loads(chase.to_json())
+    assert data["version"] == 1
+    assert Chase.from_json(chase.to_json()) == chase
+
+
+def test_mutations_write_round_tagged_log_lines():
+    chase = harvey_vs_farmer("fail", "fail")
+    chase.move("Farmer")
+    assert chase.log[-1] == "R1: Farmer moves → Location 2"
+    assert chase.log[0] == "R0: Harvey (fleeing) joins"
+
+
+def test_undo_after_move_restores_position_and_log():
+    chase = harvey_vs_farmer("fail", "fail")
+    log = list(chase.log)
+    chase.move("Harvey")
+    chase.move("Farmer")
+    chase.undo()
+    chase.undo()
+    assert chase.get("Harvey").location == 2
+    assert chase.get("Farmer").location == 0
+    assert chase.log == log
+    assert chase.current_turn().name == "Harvey"
+
+
+def test_every_mutation_autosaves_and_load_resumes(tmp_path):
+    path = tmp_path / "autosave.json"
+    chase = Chase.load(path)
+    chase.add(Participant("Harvey", "fleeing", dex=55, mov=6, speed_value=60))
+    assert Chase.load(path) == chase
+    chase.add(Participant("Farmer", "pursuer", dex=50, mov=7, speed_value=50))
+    chase.set_speed_result("Harvey", "fail")
+    chase.set_speed_result("Farmer", "fail")
+    chase.establish()
+    chase.move("Harvey")
+    assert Chase.load(path) == chase
+    chase.undo()
+    resumed = Chase.load(path)
+    assert resumed == chase
+    assert resumed.get("Harvey").location == 2
