@@ -57,6 +57,10 @@ def fallback_targets(value: int) -> dict[str, int]:
     return {"full": value, "half": value // 2, "fifth": value // 5}
 
 
+def _dice(n: int, kind: str) -> str:
+    return f"{n} {kind} {'die' if n == 1 else 'dice'}"
+
+
 @dataclass
 class Hazard:
     """Obstacle in the gap between location i and i+1 (keyed by i in Chase.hazards)."""
@@ -82,6 +86,12 @@ class Participant:
     debt: int = 0  # lost movement actions carried into the next round
     hp: int | None = None
     max_hp: int | None = None
+    build: int | None = None  # vehicles only
+    max_build: int | None = None
+    pedal: int = 0  # Pedal to the Metal locations still to travel (stopped at a hazard)
+    pedal_penalty: int = 0  # penalty dice on hazards during that acceleration
+    navigated: bool = False  # a passenger navigated: next Pedal to the Metal has 1 penalty die less
+    vehicle: str | None = None  # passenger in this vehicle: no speed roll, rides along, 1 action
 
     @property
     def adjusted_mov(self) -> int:
@@ -208,8 +218,8 @@ class Chase:
         slowest fleeing character are left behind (removed). The slowest pursuer starts on
         `start_location`, the slowest fleeing character `start_range` ahead of the foremost pursuer.
         """
-        pursuers = [p for p in self.participants if p.side == "pursuer"]
-        fleeing = [p for p in self.participants if p.side == "fleeing"]
+        pursuers = [p for p in self.participants if p.side == "pursuer" and not p.vehicle]
+        fleeing = [p for p in self.participants if p.side == "fleeing" and not p.vehicle]
         fastest_pursuer = max(p.adjusted_mov for p in pursuers)
         faster = [p.name for p in fleeing if p.adjusted_mov > fastest_pursuer]
         if len(faster) == len(fleeing):
@@ -224,17 +234,19 @@ class Chase:
             if p.adjusted_mov < slowest_fleeing:
                 self.participants.remove(p)
                 self.log_event(f"{p.name} is left behind")
-        pursuers = [p for p in self.participants if p.side == "pursuer"]
+        pursuers = [p for p in self.participants if p.side == "pursuer" and not p.vehicle]
         slowest_pursuer = min(p.adjusted_mov for p in pursuers)
         for p in pursuers:
             p.location = start_location + p.adjusted_mov - slowest_pursuer
         front = start_location + fastest_pursuer - slowest_pursuer + start_range
         for p in fleeing:
             p.location = front + p.adjusted_mov - slowest_fleeing
+        for p in pursuers + fleeing:
+            self._carry(p)
         last = max(p.location for p in self.participants) + 1
         self.locations += [f"Location {i + 1}" for i in range(len(self.locations), last + 1)]
         # Stored, not derived: leaving the chase must not recalculate movement actions.
-        self.slowest_mov = min(p.adjusted_mov for p in self.participants)
+        self.slowest_mov = min(p.adjusted_mov for p in pursuers + fleeing)
         self.round = 1
         self._reset_actions()
         self.log_event(f"Chase established, range {start_range}")
@@ -248,6 +260,10 @@ class Chase:
         """
         p = participant
         self.add(p)
+        if p.vehicle:  # no speed roll, never the slowest
+            p.actions_left = self.movement_actions(p)
+            self.set_location(p.name, self.get(p.vehicle).location)
+            return
         if speed_result is None:
             self.roll_speed(p.name)
         else:
@@ -270,6 +286,7 @@ class Chase:
     def set_location(self, name: str, location: int) -> None:
         """Keeper override: put a participant on any location."""
         self.get(name).location = location
+        self._carry(self.get(name))
         self.locations += [f"Location {i + 1}" for i in range(len(self.locations), location + 1)]
         self.log_event(f"{name} placed on {self.locations[location]}")
 
@@ -285,6 +302,24 @@ class Chase:
         self.get(name).debt = debt
         self.log_event(f"{name} debt set to {debt}")
 
+    @mutation
+    def set_build(self, name: str, build: int) -> None:
+        """Keeper override: a vehicle's current build (collisions, failed hazards)."""
+        self.get(name).build = build
+        self.log_event(f"{name} build set to {build}")
+
+    def badges(self, name: str) -> list[str]:
+        p = self.get(name)
+        badges = [f"passenger in {p.vehicle}"] if p.vehicle else []
+        if p.build is not None:
+            if p.build <= 0:
+                badges.append("undriveable")
+            elif p.build <= p.max_build // 2:
+                badges.append("impaired: 1 penalty die")
+        if p.pedal:
+            badges.append(f"pedal to the metal: {_dice(p.pedal_penalty, 'penalty')}")
+        return badges
+
     def same_location(self) -> list[int]:
         """Locations where a pursuer shares a location with a fleeing character."""
         sides: dict[int, set[str]] = {}
@@ -293,6 +328,9 @@ class Chase:
         return sorted(loc for loc, s in sides.items() if len(s) == 2)
 
     def movement_actions(self, p: Participant) -> int:
+        """Passengers: 0 movement actions, but their 1 action per turn is counted here."""
+        if p.vehicle:
+            return 1
         return 1 + p.adjusted_mov - self.slowest_mov
 
     def dex_order(self) -> list[Participant]:
@@ -340,7 +378,7 @@ class Chase:
     def current_turn(self) -> Participant | None:
         if self.ended:
             return None
-        return next((p for p in self.turn_order() if p.actions_left > 0), None)
+        return next((p for p in self.turn_order() if p.actions_left > 0 or p.pedal), None)
 
     @mutation
     def delay(self, name: str) -> None:
@@ -356,10 +394,53 @@ class Chase:
         self._advance(p)
         self.log_event(f"{name} moves → {self.locations[p.location]}")
 
+    @mutation
+    def pedal_to_the_metal(self, name: str, distance: int) -> None:
+        """Vehicle accelerates: 1 movement action for `distance` (2-5) locations (rulebook p. 140).
+
+        2-3 locations = 1 penalty die on hazards, 4-5 = 2. It stops at the first hazard ahead;
+        resolve_hazard then crosses it for free and carries on, unless the roll fails.
+        """
+        p = self.get(name)
+        penalty = (1 if distance <= 3 else 2) - p.navigated
+        p.navigated = False
+        text = f"{name} puts the pedal to the metal: {distance} locations ({_dice(penalty, 'penalty')})"
+        text += self._spend(p, 1)
+        p.pedal_penalty = penalty
+        self._accelerate(p, distance)
+        self.log_event(f"{text} → {self.locations[p.location]}")
+
+    def _accelerate(self, p: Participant, distance: int) -> None:
+        """Advance up to `distance` locations, stopping in front of any hazard."""
+        while distance and p.location not in self.hazards:
+            self._advance(p)
+            distance -= 1
+        p.pedal = distance
+
     def _advance(self, p: Participant) -> None:
         p.location += 1
         while p.location >= len(self.locations):
             self.locations.append(f"Location {len(self.locations) + 1}")
+        self._carry(p)
+
+    def _carry(self, vehicle: Participant) -> None:
+        """Passengers ride along with their vehicle."""
+        for o in self.participants:
+            if o.vehicle == vehicle.name:
+                o.location = vehicle.location
+
+    @mutation
+    def navigate(self, name: str, passed: bool) -> None:
+        """Passenger's Spot Hidden / Navigate roll: on a success the vehicle's next Pedal to the Metal
+        has 1 penalty die less. Uses the passenger's action."""
+        p = self.get(name)
+        text = f"{name} navigates for {p.vehicle}"
+        if passed:
+            self.get(p.vehicle).navigated = True
+            text += ": next Pedal to the Metal −1 penalty die"
+        else:
+            text += ", no help"
+        self.log_event(text + self._spend(p, 1))
 
     @mutation
     def add_hazard(self, gap: int, hazard: Hazard) -> None:
@@ -441,7 +522,8 @@ class Chase:
         p = self.get(name)
         hazard = self.hazard_ahead(name)
         bonus = min(bonus, 2)
-        cost = 1 + bonus
+        pedal, p.pedal = p.pedal, 0  # mid-acceleration: crossing is already paid for
+        cost = (0 if pedal else 1) + bonus
         blocked = hazard.kind == "barrier" and not passed
         text = f"{name} {'passes' if passed else 'fails'} {hazard.kind} {hazard.name}"
         if bonus:
@@ -455,11 +537,18 @@ class Chase:
         self.log_event(text + self._spend(p, cost))
         if not blocked:
             self._advance(p)
+        if pedal and passed:
+            self._accelerate(p, pedal - 1)
 
     @mutation
-    def damage_barrier(self, name: str, damage: int) -> None:
-        """Spend 1 movement action smashing the barrier ahead. At 0 HP it is gone; the participant stays."""
+    def damage_barrier(self, name: str, damage: int | None = None) -> None:
+        """Spend 1 movement action smashing the barrier ahead. At 0 HP it is gone; the participant stays.
+
+        damage None = a vehicle rolls 1D10 per point of build.
+        """
         p = self.get(name)
+        if damage is None:
+            damage = self.roll(p.build, 10, label=f"{name} barrier damage")
         gap = p.location
         barrier = self.hazards[gap]
         barrier.hp = max(0, barrier.hp - damage)
@@ -474,7 +563,10 @@ class Chase:
         if lost is None:
             lost = self.roll(1, 3, label=f"{p.name} lost actions")
         text = f", −{lost} actions" if lost else ""
-        if damage and p.hp is not None:
+        if damage and p.build is not None:
+            p.build -= damage
+            text += f", −{damage} build ({p.build})"
+        elif damage and p.hp is not None:
             p.hp -= damage
             text += f", −{damage} HP ({p.hp})"
         return lost, text

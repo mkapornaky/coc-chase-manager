@@ -49,6 +49,9 @@ def root() -> None:
         for p in chase.participants:
             with ui.row().classes("items-center"):
                 ui.label(f"{p.name} ({p.side}) DEX {p.dex} MOV {p.mov} speed {p.speed_value}")
+                if p.vehicle:
+                    ui.label(f"passenger in {p.vehicle}, no speed roll")
+                    continue
                 ui.toggle(["extreme", "success", "fail"], value=p.speed_result,
                           on_change=lambda e, n=p.name: (chase.set_speed_result(n, e.value), view.refresh()))
                 ui.button("Roll (NPC)", on_click=lambda n=p.name: (chase.roll_speed(n), view.refresh()))
@@ -59,12 +62,17 @@ def root() -> None:
             mov = ui.number("MOV", value=8, precision=0)
             speed = ui.number("Speed roll value", value=50, precision=0)
             hp = ui.number("HP (optional)", precision=0)
+            build = ui.number("Build (vehicle)", precision=0, min=1)
+            vehicle = ui.select([p.name for p in chase.participants if p.build is not None],
+                                label="Passenger in", clearable=True)
 
             def add() -> None:
                 if name.value:
                     max_hp = int(hp.value) if hp.value is not None else None
+                    max_build = int(build.value) if build.value is not None else None
                     chase.add(Participant(name.value, side.value, int(dex.value),
-                                          int(mov.value), int(speed.value), hp=max_hp, max_hp=max_hp))
+                                          int(mov.value), int(speed.value), hp=max_hp, max_hp=max_hp,
+                                          build=max_build, max_build=max_build, vehicle=vehicle.value))
                     view.refresh()
 
             ui.button("Add", on_click=add)
@@ -72,7 +80,7 @@ def root() -> None:
             ui.label(f"{n} escapes: no chase is played.").classes("text-positive text-h6")
 
         def establish() -> None:
-            if any(p.speed_result is None for p in chase.participants):
+            if any(p.speed_result is None and not p.vehicle for p in chase.participants):
                 ui.notify("Enter every speed roll result first")
                 return
             chase.establish(start_range.value, int(start_location.value) - 1)
@@ -168,8 +176,14 @@ def root() -> None:
             with ui.row().classes(f"items-center {style}"):
                 ui.button("↑", on_click=lambda i=i: swap(i)).props("dense flat").set_enabled(i > 0)
                 hp = f" HP {p.hp}/{p.max_hp}" if p.hp is not None else ""
+                build = f" build {p.build}/{p.max_build}" if p.build is not None else ""
                 ui.label(f"{p.name} DEX {p.dex} MOV {p.adjusted_mov} "
-                         f"actions {p.actions_left}/{chase.movement_actions(p)} debt {p.debt}{hp}")
+                         f"actions {p.actions_left}/{chase.movement_actions(p)} debt {p.debt}{hp}{build}")
+                for b in chase.badges(p.name):
+                    ui.badge(b, color="orange")
+                if p.build is not None:
+                    ui.number("Build", value=p.build, precision=0).on(
+                        "change", lambda e, n=p.name: (chase.set_build(n, int(e.sender.value)), view.refresh()))
                 ui.number("Location", value=p.location + 1, precision=0, min=1).on(
                     "change", lambda e, n=p.name: (chase.set_location(n, int(e.sender.value) - 1), view.refresh()))
                 ui.number("Actions", value=p.actions_left, precision=0, min=0).on(
@@ -219,11 +233,21 @@ def root() -> None:
             ui.button("Do", on_click=lambda: note.value and (
                 chase.other_action(p.name, note.value), view.refresh()))
             ui.button("Delay", on_click=lambda: (chase.delay(p.name), view.refresh()))
+            if p.vehicle:
+                for passed in (True, False):
+                    ui.button(f"Navigate {'succeeded' if passed else 'failed'}", on_click=lambda ok=passed: (
+                        chase.navigate(p.name, ok), view.refresh()))
 
     def hazard_or_move(p: Participant) -> None:
         h = chase.hazard_ahead(p.name)
+        if p.vehicle:
+            return  # passengers do not move themselves
         if h is None:
             ui.button("Move", on_click=lambda: (chase.move(p.name), view.refresh()))
+            if p.build is not None:
+                for d in range(2, 6):
+                    ui.button(f"Pedal {d}", on_click=lambda d=d: (
+                        chase.pedal_to_the_metal(p.name, d), view.refresh())).props("dense")
             return
         ui.label(f"{h.kind.capitalize()} {h.name}: {h.skill} ({h.difficulty}) {h.notes}").classes(
             "text-orange")
@@ -231,10 +255,13 @@ def root() -> None:
             smash = ui.number("Damage to barrier", value=0, precision=0, min=0)
             ui.button("Smash", on_click=lambda: (
                 chase.damage_barrier(p.name, int(smash.value or 0)), view.refresh()))
+            if p.build is not None:
+                ui.button(f"Ram ({p.build}D10)", on_click=lambda: (
+                    chase.damage_barrier(p.name), view.refresh()))
         bonus = ui.select({0: "no bonus", 1: "1 bonus die", 2: "2 bonus dice"}, value=0,
                           label="Cautious")
         lost = ui.number("Lost (blank = 1D3)", precision=0, min=1, max=3)
-        damage = ui.number("HP damage", value=0, precision=0, min=0)
+        damage = ui.number("Build damage" if p.build is not None else "HP damage", value=0, precision=0, min=0)
 
         def resolve(passed: bool) -> None:
             chase.resolve_hazard(p.name, passed, bonus.value,
