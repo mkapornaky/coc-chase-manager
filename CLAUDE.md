@@ -1,3 +1,8 @@
+## Commits
+
+- Follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/#specification): `type(scope): description`, e.g. `feat(chase): add movement action calculation`.
+- No AI attribution of any kind: no `Co-Authored-By`, "Generated with", or similar lines in commit messages or PR descriptions.
+
 ## Agent skills
 
 ### Issue tracker
