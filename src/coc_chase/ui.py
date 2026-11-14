@@ -6,14 +6,17 @@ from pathlib import Path
 from nicegui import ui
 
 from coc_chase.chase import Chase, Hazard, Participant, fallback_targets
+from coc_chase.files import import_party, list_files, load_prep, new_chase, save_prep
 
 # ponytail: one global chase per process; the Keeper is the only user
 chase = Chase.load(Path("autosave.json"))
+CHASES, PARTIES = Path("chases"), Path("parties")
 
 
 def root() -> None:
     @ui.refreshable
     def view() -> None:
+        files()
         if chase.round == 0:
             setup()
         else:
@@ -24,6 +27,26 @@ def root() -> None:
         with ui.column().classes("gap-0"):
             for line in reversed(chase.log):
                 ui.label(line)
+
+    def files() -> None:
+        def run(action, *args) -> None:
+            try:
+                action(chase, *args)
+            except ValueError as e:
+                ui.notify(f"Could not load {e}", type="negative")
+            view.refresh()
+
+        with ui.row().classes("items-end"):
+            prepped = ui.select(list_files(CHASES), label="Prepped chase")
+            ui.button("Load chase", on_click=lambda: prepped.value and run(
+                load_prep, CHASES / f"{prepped.value}.json"))
+            party = ui.select(list_files(PARTIES), label="Party")
+            ui.button("Import party", on_click=lambda: party.value and run(
+                import_party, PARTIES / f"{party.value}.json"))
+            ui.button("New blank chase", on_click=lambda: run(new_chase))
+            save_name = ui.input("Save as")
+            ui.button("Save", on_click=lambda: save_name.value and (
+                save_prep(chase, CHASES / f"{Path(save_name.value).name}.json"), view.refresh()))
 
     def dice() -> None:
         ui.label("Dice").classes("text-h6")

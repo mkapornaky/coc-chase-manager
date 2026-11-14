@@ -113,7 +113,8 @@ class Chase:
     delayed: list[str] = field(default_factory=list)  # this round only, acting after everyone else
     sudden_caller: str | None = None  # "keeper" / "players" may call the next sudden hazard; None = either
     ended: bool = False
-    log: list[str] = field(default_factory=list)
+    investigators: list[str] = field(default_factory=list)  # names imported from a party; not saved as NPCs
+    log:list[str] = field(default_factory=list)
     # Not state (compare=False): excluded from JSON, equality and undo snapshots.
     history: list[str] = field(default_factory=list, repr=False, compare=False)
     autosave: Path | None = field(default=None, repr=False, compare=False)
