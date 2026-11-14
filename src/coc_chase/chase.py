@@ -57,6 +57,15 @@ def fallback_targets(value: int) -> dict[str, int]:
 
 
 @dataclass
+class Hazard:
+    """Obstacle in the gap between location i and i+1 (keyed by i in Chase.hazards)."""
+    name: str
+    skill: str = ""  # suggested skill(s), free text
+    difficulty: str = "regular"  # "regular" / "hard" / "extreme"
+    notes: str = ""
+
+
+@dataclass
 class Participant:
     name: str
     side: str  # "pursuer" or "fleeing"
@@ -66,6 +75,9 @@ class Participant:
     speed_result: str | None = None  # "extreme" / "success" / "fail"
     location: int = 0  # index into Chase.locations
     actions_left: int = 0
+    debt: int = 0  # lost movement actions carried into the next round
+    hp: int | None = None
+    max_hp: int | None = None
 
     @property
     def adjusted_mov(self) -> int:
@@ -76,6 +88,7 @@ class Participant:
 class Chase:
     participants: list[Participant] = field(default_factory=list)
     locations: list[str] = field(default_factory=list)
+    hazards: dict[int, Hazard] = field(default_factory=dict)  # gap i = between location i and i+1
     escaped: list[str] = field(default_factory=list)
     round: int = 0  # 0 = not established yet
     slowest_mov: int = 0
@@ -97,6 +110,7 @@ class Chase:
         if data.pop("version", None) != FORMAT_VERSION:
             raise ValueError("unsupported chase file version")
         data["participants"] = [Participant(**p) for p in data["participants"]]
+        data["hazards"] = {int(i): Hazard(**h) for i, h in data["hazards"].items()}
         return cls(**data)
 
     @classmethod
@@ -195,15 +209,62 @@ class Chase:
     def move(self, name: str) -> None:
         p = self.get(name)
         p.actions_left -= 1
+        self._advance(p)
+        self.log_event(f"{name} moves → {self.locations[p.location]}")
+
+    def _advance(self, p: Participant) -> None:
         p.location += 1
         while p.location >= len(self.locations):
             self.locations.append(f"Location {len(self.locations) + 1}")
-        self.log_event(f"{name} moves → {self.locations[p.location]}")
+
+    @mutation
+    def add_hazard(self, gap: int, hazard: Hazard) -> None:
+        """Place (or replace) the hazard between location `gap` and `gap + 1`."""
+        self.hazards[gap] = hazard
+        self.log_event(f"Hazard {hazard.name} placed after {self.locations[gap]}")
+
+    def hazard_ahead(self, name: str) -> Hazard | None:
+        return self.hazards.get(self.get(name).location)
+
+    @mutation
+    def resolve_hazard(self, name: str, passed: bool, bonus: int = 0,
+                       lost: int | None = None, damage: int = 0) -> None:
+        """Cross the hazard ahead: 1 movement action plus `bonus` cautious bonus dice (max 2).
+
+        On a fail, `lost` movement actions (None = roll 1D3) and optional HP damage.
+        Actions spent beyond what is left become debt. Moves on to the next location either way.
+        """
+        p = self.get(name)
+        hazard = self.hazard_ahead(name)
+        bonus = min(bonus, 2)
+        cost = 1 + bonus
+        text = f"{name} {'passes' if passed else 'fails'} hazard {hazard.name}"
+        if bonus:
+            text += f" ({bonus} bonus {'die' if bonus == 1 else 'dice'})"
+        if not passed:
+            if lost is None:
+                lost = self.roll(1, 3, label=f"{name} lost actions")
+            cost += lost
+            text += f", −{lost} actions"
+            if damage and p.hp is not None:
+                p.hp -= damage
+                text += f", −{damage} HP ({p.hp})"
+        p.actions_left -= cost
+        if p.actions_left < 0:
+            p.debt += -p.actions_left
+            p.actions_left = 0
+            text += f", debt {p.debt}"
+        self.log_event(text)
+        self._advance(p)
 
     @mutation
     def end_round(self) -> None:
         self.round += 1
         self._reset_actions()
+        for p in self.participants:
+            paid = min(p.debt, p.actions_left)
+            p.actions_left -= paid
+            p.debt -= paid
         self.log_event(f"Round {self.round} begins")
 
     def _reset_actions(self) -> None:

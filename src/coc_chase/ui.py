@@ -5,7 +5,7 @@ from pathlib import Path
 
 from nicegui import ui
 
-from coc_chase.chase import Chase, Participant, fallback_targets
+from coc_chase.chase import Chase, Hazard, Participant, fallback_targets
 
 # ponytail: one global chase per process; the Keeper is the only user
 chase = Chase.load(Path("autosave.json"))
@@ -58,11 +58,13 @@ def root() -> None:
             dex = ui.number("DEX", value=50, precision=0)
             mov = ui.number("MOV", value=8, precision=0)
             speed = ui.number("Speed roll value", value=50, precision=0)
+            hp = ui.number("HP (optional)", precision=0)
 
             def add() -> None:
                 if name.value:
+                    max_hp = int(hp.value) if hp.value is not None else None
                     chase.add(Participant(name.value, side.value, int(dex.value),
-                                          int(mov.value), int(speed.value)))
+                                          int(mov.value), int(speed.value), hp=max_hp, max_hp=max_hp))
                     view.refresh()
 
             ui.button("Add", on_click=add)
@@ -88,16 +90,50 @@ def root() -> None:
                     for p in chase.participants:
                         if p.location == i:
                             color = "red" if p.side == "pursuer" else "blue"
-                            ui.chip(p.name, color=color, text_color="white")
+                            ui.chip(p.name + (f" debt {p.debt}" if p.debt else ""),
+                                    color=color, text_color="white")
+                if i in chase.hazards:  # between card i and i+1
+                    h = chase.hazards[i]
+                    ui.chip(h.name, color="orange").classes("self-center").tooltip(
+                        f"{h.skill} {h.difficulty} {h.notes}")
+        with ui.row().classes("items-end"):
+            gap = ui.select({i: f"after {loc}" for i, loc in enumerate(chase.locations)},
+                            value=0, label="Gap")
+            h_name = ui.input("Hazard")
+            h_skill = ui.input("Skill(s)")
+            h_diff = ui.select(["regular", "hard", "extreme"], value="regular", label="Difficulty")
+            h_notes = ui.input("Notes")
+            ui.button("Add hazard", on_click=lambda: h_name.value and (chase.add_hazard(
+                gap.value, Hazard(h_name.value, h_skill.value, h_diff.value, h_notes.value)), view.refresh()))
         ui.label("DEX order").classes("text-h6")
         for p in chase.dex_order():
             style = "bg-yellow-2" if p is turn else ""
             with ui.row().classes(f"items-center {style}"):
+                hp = f" HP {p.hp}/{p.max_hp}" if p.hp is not None else ""
                 ui.label(f"{p.name} DEX {p.dex} MOV {p.adjusted_mov} "
-                         f"actions {p.actions_left}/{chase.movement_actions(p)}")
+                         f"actions {p.actions_left}/{chase.movement_actions(p)} debt {p.debt}{hp}")
                 if p is turn:
-                    ui.button("Move", on_click=lambda n=p.name: (chase.move(n), view.refresh()))
+                    hazard_or_move(p)
         ui.button("End round", on_click=lambda: (chase.end_round(), view.refresh()))
+
+    def hazard_or_move(p: Participant) -> None:
+        h = chase.hazard_ahead(p.name)
+        if h is None:
+            ui.button("Move", on_click=lambda: (chase.move(p.name), view.refresh()))
+            return
+        ui.label(f"Hazard {h.name}: {h.skill} ({h.difficulty}) {h.notes}").classes("text-orange")
+        bonus = ui.select({0: "no bonus", 1: "1 bonus die", 2: "2 bonus dice"}, value=0,
+                          label="Cautious")
+        lost = ui.number("Lost (blank = 1D3)", precision=0, min=1, max=3)
+        damage = ui.number("HP damage", value=0, precision=0, min=0)
+
+        def resolve(passed: bool) -> None:
+            chase.resolve_hazard(p.name, passed, bonus.value,
+                                 None if lost.value is None else int(lost.value), int(damage.value or 0))
+            view.refresh()
+
+        ui.button("Pass", on_click=lambda: resolve(True))
+        ui.button("Fail", on_click=lambda: resolve(False))
 
     view()
 
