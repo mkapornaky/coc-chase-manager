@@ -236,6 +236,12 @@ class Chase:
         self.get(name).actions_left = actions
         self.log_event(f"{name} movement actions set to {actions}")
 
+    @mutation
+    def set_debt(self, name: str, debt: int) -> None:
+        """Keeper override: movement-action debt carried into the next round."""
+        self.get(name).debt = debt
+        self.log_event(f"{name} debt set to {debt}")
+
     def same_location(self) -> list[int]:
         """Locations where a pursuer shares a location with a fleeing character."""
         sides: dict[int, set[str]] = {}
@@ -309,9 +315,6 @@ class Chase:
 
     def _advance(self, p: Participant) -> None:
         p.location += 1
-        self._extend_locations(p)
-
-    def _extend_locations(self, p: Participant) -> None:
         while p.location >= len(self.locations):
             self.locations.append(f"Location {len(self.locations) + 1}")
 
@@ -388,19 +391,6 @@ class Chase:
         """`caller` ("keeper" / "players") calls a sudden hazard; the other side calls the next one."""
         self.sudden_caller = "players" if caller == "keeper" else "keeper"
         self.log_event(f"Sudden hazard called by {caller}")
-
-    @mutation
-    def set_override(self, name: str, location: int | None = None,
-                     actions_left: int | None = None, debt: int | None = None) -> None:
-        """Keeper override of any of location, movement actions left and debt."""
-        p = self.get(name)
-        changes = {k: v for k, v in
-                   {"location": location, "actions_left": actions_left, "debt": debt}.items()
-                   if v is not None}
-        for k, v in changes.items():
-            setattr(p, k, v)
-        self._extend_locations(p)
-        self.log_event(f"{name} override " + ", ".join(f"{k} {v}" for k, v in changes.items()))
 
     @mutation
     def end_chase(self) -> None:

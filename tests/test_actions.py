@@ -49,13 +49,13 @@ def test_sudden_hazard_caller_alternates_and_either_side_may_call_first():
     assert Chase.from_json(chase.to_json()) == chase
 
 
-def test_overrides_set_location_actions_and_debt_and_are_logged():
+def test_debt_override_is_paid_next_round_and_logged():
     chase = mud_chase()
-    chase.set_override("Farmer", location=6, actions_left=3, debt=1)
+    chase.set_debt("Farmer", 1)
+    assert "Farmer debt set to 1" in chase.log[-1]
+    chase.end_round()
     farmer = chase.get("Farmer")
-    assert (farmer.location, farmer.actions_left, farmer.debt) == (6, 3, 1)
-    assert len(chase.locations) == 7
-    assert "Farmer override" in chase.log[-1]
+    assert (farmer.actions_left, farmer.debt) == (1, 0)  # 2 actions, 1 paid
 
 
 def test_end_chase_stops_the_round_flow():
