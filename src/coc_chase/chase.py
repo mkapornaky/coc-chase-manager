@@ -96,6 +96,7 @@ class Chase:
     hazards: dict[int, Hazard] = field(default_factory=dict)  # gap i = between location i and i+1
     escaped: list[str] = field(default_factory=list)
     may_escape: list[str] = field(default_factory=list)
+    unable_to_join: list[str] = field(default_factory=list)  # pursuers too slow to join mid-chase
     order: list[str] = field(default_factory=list)  # Keeper turn order; empty = by DEX
     round: int = 0  # 0 = not established yet
     slowest_mov: int = 0
@@ -183,6 +184,12 @@ class Chase:
         self.participants.append(participant)
         self.log_event(f"{participant.name} ({participant.side}) joins")
 
+    @mutation
+    def remove(self, name: str) -> None:
+        """Leave the chase. Movement actions are not recalculated (slowest_mov is stored)."""
+        self.participants.remove(self.get(name))
+        self.log_event(f"{name} leaves the chase")
+
     def get(self, name: str) -> Participant:
         return next(p for p in self.participants if p.name == name)
 
@@ -231,6 +238,33 @@ class Chase:
         self.round = 1
         self._reset_actions()
         self.log_event(f"Chase established, range {start_range}")
+
+    @mutation
+    def join(self, participant: Participant, location: int, speed_result: str | None = None) -> None:
+        """Join a running chase (rulebook p. 142). speed_result None = NPC speed roll.
+
+        A pursuer slower than the slowest fleeing character is flagged in `unable_to_join`
+        and left out. A new slowest participant shifts everyone's movement actions (spent ones stay spent).
+        """
+        p = participant
+        self.add(p)
+        if speed_result is None:
+            self.roll_speed(p.name)
+        else:
+            self.set_speed_result(p.name, speed_result)
+        fleeing = [o.adjusted_mov for o in self.participants if o.side == "fleeing"]
+        if p.side == "pursuer" and fleeing and p.adjusted_mov < min(fleeing):
+            self.participants.remove(p)
+            self.unable_to_join.append(p.name)
+            self.log_event(f"{p.name} is too slow to join")
+            return
+        if p.adjusted_mov < self.slowest_mov:
+            for other in self.participants:
+                other.actions_left += self.slowest_mov - p.adjusted_mov
+            self.slowest_mov = p.adjusted_mov
+            self.log_event(f"{p.name} is the new slowest, movement actions recalculated")
+        p.actions_left = self.movement_actions(p)
+        self.set_location(p.name, location)
 
     @mutation
     def set_location(self, name: str, location: int) -> None:
