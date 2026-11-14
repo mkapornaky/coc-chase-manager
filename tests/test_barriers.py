@@ -87,13 +87,13 @@ def test_random_hazard_fills_gap_with_rolled_difficulty_and_logs_roll():
     assert chase.log[-1] == "R1: Random hazard after Location 1 D100: 85 hard"
 
 
-def test_random_hazard_penalty_die_keeps_higher_and_clear_empties_gap():
+def test_random_hazard_penalty_die_keeps_higher_and_clear_keeps_the_existing_hazard():
     chase = fence_chase(rng=FixedRng(6, 9, 2))  # units 6, tens 9 and 2
     chase.roll_random_hazard(1, bonus=-1)
     assert chase.hazards[1].difficulty == "extreme"
     chase.rng = FixedRng(9, 5, 0)  # bonus die keeps 09
     chase.roll_random_hazard(1, bonus=1)
-    assert 1 not in chase.hazards
+    assert chase.hazards[1].difficulty == "extreme"
     assert chase.log[-1] == "R1: Random hazard after Location 2 (1 bonus) D100: 9 clear"
 
 

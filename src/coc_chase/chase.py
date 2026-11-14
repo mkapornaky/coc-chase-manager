@@ -514,7 +514,7 @@ class Chase:
 
     @mutation
     def roll_random_hazard(self, gap: int, bonus: int = 0) -> None:
-        """D100 for the gap: 01-59 clear (empties it), 60+ regular, 85+ hard, 96+ extreme.
+        """D100 for the gap: 01-59 clear (logged only, any hazard stays), 60+ regular, 85+ hard, 96+ extreme.
 
         bonus = 1 for a quiet environment, -1 for an especially hazardous one.
         """
@@ -523,8 +523,6 @@ class Chase:
                       else "regular" if roll >= 60 else None)
         if difficulty:
             self.hazards[gap] = Hazard("random hazard", difficulty=difficulty)
-        else:
-            self.hazards.pop(gap, None)
         dice = f" ({abs(bonus)} {'bonus' if bonus > 0 else 'penalty'})" if bonus else ""
         self.log_event(f"Random hazard after {self.locations[gap]}{dice} D100: {roll} {difficulty or 'clear'}")
 
