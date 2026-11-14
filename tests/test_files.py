@@ -46,21 +46,22 @@ def test_loading_a_chase_and_importing_a_party_is_ready_to_establish(tmp_path):
     assert chase.round == 1
 
 
-def test_save_as_writes_only_prep_content(tmp_path):
+def test_loaded_prep_carries_no_live_state(tmp_path):
     chase = prepped_chase()
     import_party(chase, write(tmp_path / "party.json", PARTY))
     chase.set_speed_result("Cultist", "success")
     chase.set_speed_result("Harvey", "success")
     chase.establish()
     chase.move("Harvey")
+    chase.set_debt("Cultist", 2)
     chase.get("Cultist").hp = 3
     save_prep(chase, tmp_path / "docks.json")
-    data = json.loads((tmp_path / "docks.json").read_text())
-    assert set(data) == {"version", "locations", "hazards", "npcs"}
-    [npc] = data["npcs"]  # the imported investigator is not an NPC
-    assert npc["name"] == "Cultist"
-    assert npc["hp"] == 11
-    assert not {"speed_result", "location", "actions_left", "debt"} & set(npc)
+    loaded = Chase()
+    load_prep(loaded, tmp_path / "docks.json")
+    [npc] = loaded.participants  # the imported investigator is not an NPC
+    assert (npc.name, npc.hp, npc.location, npc.debt, npc.speed_result) == ("Cultist", 11, 0, 0, None)
+    assert loaded.round == 0
+    assert loaded.log == ["R0: Loaded chase docks"]
 
 
 def test_list_files_gives_json_names_and_tolerates_missing_folder(tmp_path):
