@@ -104,3 +104,28 @@ def test_range_one_from_chosen_start_location():
     chase = apartment_chase(start_range=1, start_location=3)
     assert locations(chase) == {"Cultist A": 3, "Cultist B": 3, "Cultist C": 5,
                                 "Harvey": 6, "Brian": 9, "Scott": 11}
+
+
+def test_faster_fleeing_in_a_group_chase_may_escape_but_the_chase_starts():
+    chase = Chase()
+    chase.add(Participant("Harvey", "fleeing", dex=55, mov=9, speed_value=50))
+    chase.add(Participant("Hound", "pursuer", dex=60, mov=8, speed_value=50))
+    chase.add(Participant("Ghoul", "pursuer", dex=40, mov=7, speed_value=50))
+    for name in ("Harvey", "Hound", "Ghoul"):
+        chase.set_speed_result(name, "success")
+    chase.establish()
+    assert chase.escaped == []
+    assert chase.may_escape == ["Harvey"]
+    assert chase.round == 1
+    assert "R0: Hound is left behind" in chase.log  # slower than the slowest fleeing character
+
+
+def test_one_on_one_escape_ignores_passengers():
+    chase = Chase()
+    chase.add(Participant("Harvey", "fleeing", dex=55, mov=14, speed_value=50, build=5, max_build=5))
+    chase.add(Participant("Hilda", "fleeing", dex=60, mov=7, speed_value=0, vehicle="Harvey"))
+    chase.add(Participant("Police", "pursuer", dex=50, mov=13, speed_value=50, build=5, max_build=5))
+    chase.set_speed_result("Harvey", "success")
+    chase.set_speed_result("Police", "success")
+    chase.establish()
+    assert chase.escaped == ["Harvey"]

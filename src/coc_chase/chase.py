@@ -228,8 +228,8 @@ class Chase:
     def establish(self, start_range: int = 2, start_location: int = 0) -> None:
         """Eliminate, place, compute movement actions and start round 1 (rulebook p. 146).
 
-        Every fleeing character faster than every pursuer: they escape, no chase is played.
-        Otherwise faster ones are flagged in `may_escape`, and pursuers slower than the
+        One-on-one (passengers aside) with the fleeing character faster: they escape, no chase is played.
+        Otherwise faster fleeing characters are flagged in `may_escape`, and pursuers slower than the
         slowest fleeing character are left behind (removed). The slowest pursuer starts on
         `start_location`, the slowest fleeing character `start_range` ahead of the foremost pursuer.
         """
@@ -237,7 +237,7 @@ class Chase:
         fleeing = [p for p in self.participants if p.side == "fleeing" and not p.is_passenger]
         fastest_pursuer = max(p.adjusted_mov for p in pursuers)
         faster = [p.name for p in fleeing if p.adjusted_mov > fastest_pursuer]
-        if len(faster) == len(fleeing):
+        if faster and len(pursuers) == len(fleeing) == 1:
             self.escaped = faster
             self.log_event(f"{', '.join(faster)} escapes, no chase is played")
             return
@@ -250,7 +250,7 @@ class Chase:
                 self.participants.remove(p)
                 self.log_event(f"{p.name} is left behind")
         pursuers = [p for p in self.participants if p.side == "pursuer" and not p.is_passenger]
-        slowest_pursuer = min(p.adjusted_mov for p in pursuers)
+        slowest_pursuer = min((p.adjusted_mov for p in pursuers), default=fastest_pursuer)
         for p in pursuers:
             p.location = start_location + p.adjusted_mov - slowest_pursuer
         front = start_location + fastest_pursuer - slowest_pursuer + start_range
