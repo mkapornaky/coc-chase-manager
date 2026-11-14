@@ -68,3 +68,12 @@ def test_hazard_resolution_is_undoable_and_round_trips():
     chase.undo()
     chase.undo()
     assert chase.to_json() == before
+
+
+def test_cautious_bonus_dice_are_capped_at_actions_left_and_never_make_debt():
+    chase = mud_chase()
+    farmer = chase.get("Farmer")
+    farmer.location, farmer.actions_left = 1, 2
+    chase.resolve_hazard("Farmer", passed=True, bonus=2)
+    assert (farmer.actions_left, farmer.debt) == (0, 0)  # 1 to cross + only 1 bonus die
+    assert "(1 bonus die)" in chase.log[-1]

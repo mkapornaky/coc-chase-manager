@@ -569,7 +569,8 @@ class Chase:
     @mutation
     def resolve_hazard(self, name: str, passed: bool, bonus: int = 0,
                        lost: int | None = None, damage: int = 0) -> None:
-        """Cross the hazard ahead: 1 movement action plus `bonus` cautious bonus dice (max 2).
+        """Cross the hazard ahead: 1 movement action plus `bonus` cautious bonus dice (max 2, and
+        no more than the actions left after crossing).
 
         On a fail, `lost` movement actions (None = roll 1D3) and optional HP damage.
         Actions spent beyond what is left become debt. Moves on to the next location either way,
@@ -577,9 +578,10 @@ class Chase:
         """
         p = self.get(name)
         hazard = self.hazard_ahead(name)
-        bonus = min(bonus, 2)
         pedal, p.pedal = p.pedal, 0  # mid-acceleration: crossing is already paid for
-        cost = (0 if pedal else 1) + bonus
+        cost = 0 if pedal else 1
+        bonus = max(0, min(bonus, 2, p.actions_left - cost))  # only actions actually left, never debt
+        cost += bonus
         blocked = hazard.kind == "barrier" and not passed
         text = f"{name} {'passes' if passed else 'fails'} {hazard.kind} {hazard.name}"
         if bonus:
