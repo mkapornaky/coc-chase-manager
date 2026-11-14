@@ -7,12 +7,13 @@ from pathlib import Path
 from coc_chase.chase import FORMAT_VERSION, Chase, Hazard, Participant, mutation
 
 # Live state that never goes into a prep file.
-LIVE = ("speed_result", "location", "actions_left", "debt")
+LIVE = ("speed_result", "location", "actions_left", "debt", "pedal", "pedal_penalty", "navigated")
 
 
 def _prep_participant(p: Participant) -> dict:
     data = {k: v for k, v in asdict(p).items() if k not in LIVE}
     data["hp"] = p.max_hp
+    data["build"] = p.max_build
     return data
 
 

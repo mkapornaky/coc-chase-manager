@@ -139,3 +139,17 @@ def test_vehicle_stopped_at_hazard_mid_acceleration_keeps_the_turn():
     chase.resolve_hazard("Harvey", passed=True)
     assert (harvey.location, harvey.actions_left, harvey.debt) == (6, 0, 0)
     assert chase.current_turn() is chase.get("Police 1")
+
+
+def test_prep_file_keeps_vehicle_at_full_build_without_live_acceleration(tmp_path):
+    from coc_chase.files import load_prep, save_prep
+    chase = police_chase()
+    chase.set_build("Police 1", 1)
+    chase.get("Police 1").navigated = True
+    chase.pedal_to_the_metal("Police 2", 2)  # stops at the truck
+    save_prep(chase, tmp_path / "prep.json")
+    loaded = Chase()
+    load_prep(loaded, tmp_path / "prep.json")
+    p1, p2 = (loaded.get(n) for n in ("Police 1", "Police 2"))
+    assert (p1.build, p1.max_build, p1.navigated) == (5, 5, False)
+    assert (p2.pedal, p2.pedal_penalty) == (0, 0)
