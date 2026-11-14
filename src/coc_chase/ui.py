@@ -86,6 +86,14 @@ def root() -> None:
     def running() -> None:
         turn = chase.current_turn()
         ui.label(f"Round {chase.round}").classes("text-h6")
+        if chase.ended:
+            ui.label("Chase over").classes("text-negative text-h6")
+        with ui.row().classes("items-center"):
+            caller = {None: "either side", "keeper": "Keeper", "players": "players"}[chase.sudden_caller]
+            ui.label(f"Next sudden hazard call: {caller}")
+            for side in ("keeper", "players"):
+                ui.button(f"{side.capitalize()} calls", on_click=lambda s=side: (
+                    chase.call_sudden_hazard(s), view.refresh())).props("dense")
         if chase.may_escape:
             ui.label(f"May escape: {', '.join(chase.may_escape)}").classes("text-positive")
         for group in chase.dex_ties():
@@ -136,9 +144,32 @@ def root() -> None:
                     "change", lambda e, n=p.name: (chase.set_location(n, int(e.sender.value) - 1), view.refresh()))
                 ui.number("Actions", value=p.actions_left, precision=0, min=0).on(
                     "change", lambda e, n=p.name: (chase.set_actions(n, int(e.sender.value)), view.refresh()))
+                ui.number("Debt", value=p.debt, precision=0, min=0).on(
+                    "change", lambda e, n=p.name: (chase.set_debt(n, int(e.sender.value)), view.refresh()))
                 if p is turn:
                     hazard_or_move(p)
-        ui.button("End round", on_click=lambda: (chase.end_round(), view.refresh()))
+            if p is turn:
+                other_actions(p)
+        if not chase.ended:
+            with ui.row():
+                ui.button("End round", on_click=lambda: (chase.end_round(), view.refresh()))
+                ui.button("End chase", color="negative", on_click=lambda: (chase.end_chase(), view.refresh()))
+
+    def other_actions(p: Participant) -> None:
+        others = [o.name for o in chase.participants if o.side != p.side]
+        with ui.row().classes("items-end"):
+            target = ui.select(others, value=others[0] if others else None, label="Target")
+            lost = ui.number("Lost (blank = 1D3)", precision=0, min=1, max=3)
+            damage = ui.number("HP damage", value=0, precision=0, min=0)
+            ui.button("Attack", on_click=lambda: target.value and (
+                chase.attack(p.name, target.value), view.refresh()))
+            ui.button("Maneuver succeeded", on_click=lambda: target.value and (chase.maneuver(
+                p.name, target.value, None if lost.value is None else int(lost.value),
+                int(damage.value or 0)), view.refresh()))
+            note = ui.input("Other action")
+            ui.button("Do", on_click=lambda: note.value and (
+                chase.other_action(p.name, note.value), view.refresh()))
+            ui.button("Delay", on_click=lambda: (chase.delay(p.name), view.refresh()))
 
     def hazard_or_move(p: Participant) -> None:
         h = chase.hazard_ahead(p.name)
