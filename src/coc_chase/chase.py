@@ -92,6 +92,9 @@ class Chase:
     escaped: list[str] = field(default_factory=list)
     round: int = 0  # 0 = not established yet
     slowest_mov: int = 0
+    delayed: list[str] = field(default_factory=list)  # this round only, acting after everyone else
+    sudden_caller: str | None = None  # "keeper" / "players" may call the next sudden hazard; None = either
+    ended: bool = False
     log: list[str] = field(default_factory=list)
     # Not state (compare=False): excluded from JSON, equality and undo snapshots.
     history: list[str] = field(default_factory=list, repr=False, compare=False)
@@ -202,8 +205,22 @@ class Chase:
     def dex_order(self) -> list[Participant]:
         return sorted(self.participants, key=lambda p: p.dex, reverse=True)
 
+    def turn_order(self) -> list[Participant]:
+        """DEX order with this round's delayed participants moved to the end, latest delay last."""
+        order = [p for p in self.dex_order() if p.name not in self.delayed]
+        return order + [self.get(n) for n in self.delayed]
+
     def current_turn(self) -> Participant | None:
-        return next((p for p in self.dex_order() if p.actions_left > 0), None)
+        if self.ended:
+            return None
+        return next((p for p in self.turn_order() if p.actions_left > 0), None)
+
+    @mutation
+    def delay(self, name: str) -> None:
+        if name in self.delayed:
+            self.delayed.remove(name)
+        self.delayed.append(name)
+        self.log_event(f"{name} delays")
 
     @mutation
     def move(self, name: str) -> None:
@@ -214,6 +231,9 @@ class Chase:
 
     def _advance(self, p: Participant) -> None:
         p.location += 1
+        self._extend_locations(p)
+
+    def _extend_locations(self, p: Participant) -> None:
         while p.location >= len(self.locations):
             self.locations.append(f"Location {len(self.locations) + 1}")
 
@@ -242,24 +262,79 @@ class Chase:
         if bonus:
             text += f" ({bonus} bonus {'die' if bonus == 1 else 'dice'})"
         if not passed:
-            if lost is None:
-                lost = self.roll(1, 3, label=f"{name} lost actions")
+            lost, outcome = self._fail_outcome(p, lost, damage)
             cost += lost
-            text += f", −{lost} actions"
-            if damage and p.hp is not None:
-                p.hp -= damage
-                text += f", −{damage} HP ({p.hp})"
-        p.actions_left -= cost
-        if p.actions_left < 0:
-            p.debt += -p.actions_left
-            p.actions_left = 0
-            text += f", debt {p.debt}"
-        self.log_event(text)
+            text += outcome
+        self.log_event(text + self._spend(p, cost))
         self._advance(p)
+
+    def _fail_outcome(self, p: Participant, lost: int | None, damage: int) -> tuple[int, str]:
+        """Hazard-failure outcome: `lost` actions (None = roll 1D3) and optional HP damage."""
+        if lost is None:
+            lost = self.roll(1, 3, label=f"{p.name} lost actions")
+        text = f", −{lost} actions"
+        if damage and p.hp is not None:
+            p.hp -= damage
+            text += f", −{damage} HP ({p.hp})"
+        return lost, text
+
+    def _spend(self, p: Participant, cost: int) -> str:
+        """Spend movement actions; whatever is not left becomes debt. Returns a log suffix."""
+        p.actions_left -= cost
+        if p.actions_left >= 0:
+            return ""
+        p.debt += -p.actions_left
+        p.actions_left = 0
+        return f", debt {p.debt}"
+
+    @mutation
+    def attack(self, name: str, target: str) -> None:
+        """Initiate an attack: 1 movement action. The Keeper runs the combat roll."""
+        self.log_event(f"{name} attacks {target}" + self._spend(self.get(name), 1))
+
+    @mutation
+    def other_action(self, name: str, note: str) -> None:
+        """Anything else (spell, lock, firing while stopped): 1 movement action."""
+        self.log_event(f"{name}: {note}" + self._spend(self.get(name), 1))
+
+    @mutation
+    def maneuver(self, name: str, target: str, lost: int | None = None, damage: int = 0) -> None:
+        """Successful fighting maneuver: 1 action for `name`, hazard-failure outcome for `target`."""
+        t = self.get(target)
+        lost, outcome = self._fail_outcome(t, lost, damage)
+        spent = self._spend(self.get(name), 1)
+        self.log_event(f"{name} maneuvers {target}{spent}{outcome}" + self._spend(t, lost))
+
+    @mutation
+    def call_sudden_hazard(self, caller: str) -> None:
+        """`caller` ("keeper" / "players") calls a sudden hazard; the other side calls the next one."""
+        self.sudden_caller = "players" if caller == "keeper" else "keeper"
+        self.log_event(f"Sudden hazard called by {caller}")
+
+    @mutation
+    def set_override(self, name: str, location: int | None = None,
+                     actions_left: int | None = None, debt: int | None = None) -> None:
+        """Keeper override of any of location, movement actions left and debt."""
+        p = self.get(name)
+        changes = {k: v for k, v in
+                   {"location": location, "actions_left": actions_left, "debt": debt}.items()
+                   if v is not None}
+        for k, v in changes.items():
+            setattr(p, k, v)
+        self._extend_locations(p)
+        self.log_event(f"{name} override " + ", ".join(f"{k} {v}" for k, v in changes.items()))
+
+    @mutation
+    def end_chase(self) -> None:
+        self.ended = True
+        self.log_event("Chase ends")
 
     @mutation
     def end_round(self) -> None:
+        if self.ended:
+            return
         self.round += 1
+        self.delayed = []
         self._reset_actions()
         for p in self.participants:
             paid = min(p.debt, p.actions_left)
