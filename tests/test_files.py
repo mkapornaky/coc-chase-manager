@@ -108,3 +108,12 @@ def test_invalid_chase_file_raises_value_error_and_leaves_chase_alone(tmp_path, 
     with pytest.raises(ValueError, match="bad.json"):
         import_party(chase, path)
     assert chase.to_json() == before
+
+
+def test_participant_notes_are_saved_in_prep_files(tmp_path):
+    chase = Chase()
+    chase.add(Participant("Cultist", "pursuer", dex=50, mov=8, speed_value=50, notes="Knife 40%"))
+    save_prep(chase, tmp_path / "notes.json")
+    loaded = Chase()
+    load_prep(loaded, tmp_path / "notes.json")
+    assert loaded.get("Cultist").notes == "Knife 40%"

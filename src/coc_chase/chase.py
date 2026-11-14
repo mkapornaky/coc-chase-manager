@@ -94,6 +94,7 @@ class Participant:
     navigated: bool = False  # a passenger navigated: next Pedal to the Metal has 1 penalty die less
     vehicle: str | None = None  # passenger in this vehicle: no speed roll, rides along, 1 action
     passenger_action: bool = False  # passengers only: this round's one action is still unused
+    notes: str = ""  # Keeper's free text: skills, conditions
 
     @property
     def is_vehicle(self) -> bool:
