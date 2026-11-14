@@ -14,11 +14,18 @@ def mutation(fn):
     """Wrap every state-changing Chase method: snapshot for undo, run, autosave.
 
     The method itself writes its log line with self.log_event(...).
+    Nested calls (a mutation calling another, e.g. a dice roll) share the outer snapshot.
     """
     @functools.wraps(fn)
     def wrapper(self, *args, **kwargs):
+        if self._in_mutation:
+            return fn(self, *args, **kwargs)
         snapshot = self.to_json()
-        result = fn(self, *args, **kwargs)
+        self._in_mutation = True
+        try:
+            result = fn(self, *args, **kwargs)
+        finally:
+            self._in_mutation = False
         self.history.append(snapshot)
         self.save()
         return result
@@ -26,6 +33,27 @@ def mutation(fn):
 
 
 SPEED_MOD = {"extreme": 1, "success": 0, "fail": -1}
+# D100 result level -> speed result
+SPEED_FROM_LEVEL = {"critical": "extreme", "extreme": "extreme", "hard": "success",
+                    "regular": "success", "failure": "fail", "fumble": "fail"}
+
+
+def success_level(roll: int, target: int) -> str:
+    """7e result level of a D100 roll against target."""
+    if roll == 1:
+        return "critical"
+    if roll == 100 or (target < 50 and roll >= 96):
+        return "fumble"
+    if roll <= target // 5:
+        return "extreme"
+    if roll <= target // 2:
+        return "hard"
+    return "regular" if roll <= target else "failure"
+
+
+def fallback_targets(value: int) -> dict[str, int]:
+    """Monster skill fallback: full, half or one-fifth of a characteristic (e.g. DEX)."""
+    return {"full": value, "half": value // 2, "fifth": value // 5}
 
 
 @dataclass
@@ -56,6 +84,7 @@ class Chase:
     history: list[str] = field(default_factory=list, repr=False, compare=False)
     autosave: Path | None = field(default=None, repr=False, compare=False)
     rng: random.Random = field(default_factory=random.Random, repr=False, compare=False)
+    _in_mutation: bool = field(default=False, repr=False, compare=False)
 
     def to_json(self) -> str:
         """Full live state. Fields with compare=False (rng, undo history, autosave path) are not state."""
@@ -94,6 +123,31 @@ class Chase:
             if f.compare:
                 setattr(self, f.name, getattr(previous, f.name))
         self.save()
+
+    @mutation
+    def roll(self, count: int, sides: int, label: str = "") -> int:
+        """NxDy, e.g. roll(1, 3) for 1D3. Logged."""
+        total = sum(self.rng.randint(1, sides) for _ in range(count))
+        self.log_event(f"{label + ' ' if label else ''}{count}D{sides}: {total}")
+        return total
+
+    @mutation
+    def roll_d100(self, target: int, bonus: int = 0, label: str = "") -> tuple[int, str]:
+        """D100 vs target. bonus > 0: that many bonus dice, < 0: penalty dice (max 2). Logged."""
+        units = self.rng.randint(0, 9)
+        rolls = [(self.rng.randint(0, 9) * 10 + units) or 100 for _ in range(1 + abs(bonus))]
+        result = min(rolls) if bonus >= 0 else max(rolls)
+        level = success_level(result, target)
+        dice = f" ({abs(bonus)} {'bonus' if bonus > 0 else 'penalty'})" if bonus else ""
+        self.log_event(f"{label + ' ' if label else ''}D100 vs {target}{dice}: {result} {level}")
+        return result, level
+
+    @mutation
+    def roll_speed(self, name: str) -> None:
+        """NPC speed roll against the participant's speed-roll value."""
+        p = self.get(name)
+        _, level = self.roll_d100(p.speed_value, label=f"{name} speed roll")
+        self.set_speed_result(name, SPEED_FROM_LEVEL[level])
 
     @mutation
     def add(self, participant: Participant) -> None:
