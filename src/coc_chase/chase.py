@@ -164,11 +164,14 @@ class Chase:
     def undo(self) -> None:
         if not self.history:
             return
-        previous = Chase.from_json(self.history.pop())
+        self.replace_with(Chase.from_json(self.history.pop()))
+        self.save()
+
+    def replace_with(self, other: "Chase") -> None:
+        """Take over all of `other`'s state; history, autosave path and rng stay. Not logged or snapshotted."""
         for f in fields(self):
             if f.compare:
-                setattr(self, f.name, getattr(previous, f.name))
-        self.save()
+                setattr(self, f.name, getattr(other, f.name))
 
     @mutation
     def roll(self, count: int, sides: int, label: str = "") -> int:
@@ -253,8 +256,7 @@ class Chase:
             p.location = front + p.adjusted_mov - slowest_fleeing
         for p in pursuers + fleeing:
             self._carry(p)
-        last = max(p.location for p in self.participants) + 1
-        self.locations += [f"Location {i + 1}" for i in range(len(self.locations), last + 1)]
+        self._pad(max(p.location for p in self.participants) + 1)
         # Stored, not derived: leaving the chase must not recalculate movement actions.
         self.slowest_mov = min(p.adjusted_mov for p in pursuers + fleeing)
         self.round = 1
@@ -297,7 +299,7 @@ class Chase:
         """Keeper override: put a participant on any location."""
         self.get(name).location = location
         self._carry(self.get(name))
-        self.locations += [f"Location {i + 1}" for i in range(len(self.locations), location + 1)]
+        self._pad(location)
         self.log_event(f"{name} placed on {self.locations[location]}")
 
     @mutation
@@ -440,9 +442,12 @@ class Chase:
 
     def _advance(self, p: Participant) -> None:
         p.location += 1
-        while p.location >= len(self.locations):
-            self.locations.append(f"Location {len(self.locations) + 1}")
+        self._pad(p.location)
         self._carry(p)
+
+    def _pad(self, index: int) -> None:
+        """Append blank locations until `index` exists."""
+        self.locations += [f"Location {i + 1}" for i in range(len(self.locations), index + 1)]
 
     def _carry(self, vehicle: Participant) -> None:
         """Passengers ride along with their vehicle."""

@@ -1,7 +1,7 @@
 """Prepped chase and party roster files: plain JSON with a version field. No UI imports."""
 
 import json
-from dataclasses import asdict, fields
+from dataclasses import asdict
 from pathlib import Path
 
 from coc_chase.chase import FORMAT_VERSION, Chase, Hazard, Participant, mutation
@@ -65,9 +65,7 @@ def list_files(folder: Path) -> list[str]:
 
 
 def _replace(chase: Chase, fresh: Chase, message: str) -> None:
-    for f in fields(chase):
-        if f.compare:
-            setattr(chase, f.name, getattr(fresh, f.name))
+    chase.replace_with(fresh)
     chase.log_event(message)
 
 
