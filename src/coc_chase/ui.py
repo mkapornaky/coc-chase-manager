@@ -146,14 +146,33 @@ def root() -> None:
                     "change", lambda e, n=p.name: (chase.set_actions(n, int(e.sender.value)), view.refresh()))
                 ui.number("Debt", value=p.debt, precision=0, min=0).on(
                     "change", lambda e, n=p.name: (chase.set_debt(n, int(e.sender.value)), view.refresh()))
+                ui.button("Remove", on_click=lambda n=p.name: (chase.remove(n), view.refresh())).props("dense flat")
                 if p is turn:
                     hazard_or_move(p)
             if p is turn:
                 other_actions(p)
+        join()
         if not chase.ended:
             with ui.row():
                 ui.button("End round", on_click=lambda: (chase.end_round(), view.refresh()))
                 ui.button("End chase", color="negative", on_click=lambda: (chase.end_chase(), view.refresh()))
+
+    def join() -> None:
+        ui.label("Join mid-chase").classes("text-h6")
+        if chase.unable_to_join:
+            ui.label(f"Too slow to join: {', '.join(chase.unable_to_join)}").classes("text-warning")
+        with ui.row().classes("items-end"):
+            name = ui.input("Name")
+            side = ui.select(["pursuer", "fleeing"], value="pursuer", label="Side")
+            dex = ui.number("DEX", value=50, precision=0)
+            mov = ui.number("MOV", value=8, precision=0)
+            speed = ui.number("Speed roll value", value=50, precision=0)
+            result = ui.select({"npc": "NPC roll", "extreme": "extreme", "success": "success", "fail": "fail"},
+                               value="npc", label="Speed result")
+            location = ui.number("Location", value=1, precision=0, min=1)
+            ui.button("Join", on_click=lambda: name.value and (chase.join(
+                Participant(name.value, side.value, int(dex.value), int(mov.value), int(speed.value)),
+                int(location.value) - 1, None if result.value == "npc" else result.value), view.refresh()))
 
     def other_actions(p: Participant) -> None:
         others = [o.name for o in chase.participants if o.side != p.side]
