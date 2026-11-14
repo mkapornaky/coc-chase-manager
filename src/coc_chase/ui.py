@@ -67,11 +67,33 @@ def root() -> None:
             ui.button("Roll NxDy", on_click=lambda: (
                 chase.roll(int(count.value), int(sides.value), label.value), view.refresh()))
 
+    def edit(p: Participant) -> None:
+        """Edit any participant field."""
+        def whole(v):
+            return None if v is None else int(v)
+
+        with ui.expansion("Edit").props("dense"), ui.row().classes("items-end"):
+            name = ui.input("Name", value=p.name)
+            side = ui.select(["pursuer", "fleeing"], value=p.side, label="Side")
+            dex = ui.number("DEX", value=p.dex, precision=0)
+            mov = ui.number("MOV", value=p.mov, precision=0)
+            speed = ui.number("Speed roll value", value=p.speed_value, precision=0)
+            hp = ui.number("HP", value=p.hp, precision=0)
+            build = ui.number("Build", value=p.build, precision=0)
+            vehicle = ui.select([o.name for o in chase.participants if o.is_vehicle and o is not p],
+                                value=p.vehicle, label="Passenger in", clearable=True)
+            notes = ui.input("Notes", value=p.notes)
+            ui.button("Save", on_click=lambda: name.value and (chase.edit_participant(
+                p.name, name=name.value, side=side.value, dex=int(dex.value), mov=int(mov.value),
+                speed_value=int(speed.value), hp=whole(hp.value), build=whole(build.value),
+                vehicle=vehicle.value, notes=notes.value or ""), view.refresh()))
+
     def setup() -> None:
         ui.label("Participants").classes("text-h6")
         for p in chase.participants:
             with ui.row().classes("items-center"):
-                ui.label(f"{p.name} ({p.side}) DEX {p.dex} MOV {p.mov} speed {p.speed_value}")
+                ui.label(f"{p.name} ({p.side}) DEX {p.dex} MOV {p.mov} speed {p.speed_value} {p.notes}")
+                edit(p)
                 if p.is_passenger:
                     ui.label(f"passenger in {p.vehicle}, no speed roll")
                     continue
@@ -203,7 +225,8 @@ def root() -> None:
                 if p.is_passenger:
                     build += f" action {'ready' if p.passenger_action else 'used'}"
                 ui.label(f"{p.name} DEX {p.dex} MOV {p.adjusted_mov} "
-                         f"actions {p.actions_left}/{chase.movement_actions(p)} debt {p.debt}{hp}{build}")
+                         f"actions {p.actions_left}/{chase.movement_actions(p)} debt {p.debt}{hp}{build} {p.notes}")
+                edit(p)
                 for b in chase.badges(p.name):
                     ui.badge(b, color="orange")
                 if p.is_vehicle:

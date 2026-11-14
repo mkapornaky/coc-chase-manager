@@ -323,6 +323,33 @@ class Chase:
         self.get(name).build = build
         self.log_event(f"{name} build set to {build}")
 
+    @mutation
+    def edit_participant(self, name: str, /, **changes) -> None:
+        """Keeper edit of any Participant field. A new name follows into every list that refers to it.
+
+        Giving HP or build to someone without a maximum makes it their starting value.
+        """
+        unknown = set(changes) - {f.name for f in fields(Participant)}
+        if unknown:
+            raise ValueError(f"unknown participant fields: {', '.join(sorted(unknown))}")
+        p = self.get(name)
+        changes = {k: v for k, v in changes.items() if getattr(p, k) != v}
+        for k, v in changes.items():
+            setattr(p, k, v)
+        if p.max_hp is None:
+            p.max_hp = p.hp
+        if p.max_build is None:
+            p.max_build = p.build
+        new = changes.get("name")
+        if new:
+            for names in (self.order, self.delayed, self.investigators, self.may_escape):
+                names[:] = [new if n == name else n for n in names]
+            for o in self.participants:
+                if o.vehicle == name:
+                    o.vehicle = new
+        if changes:
+            self.log_event(f"{name} edited: " + ", ".join(f"{k} {v}" for k, v in changes.items()))
+
     def badges(self, name: str) -> list[str]:
         p = self.get(name)
         badges = [f"passenger in {p.vehicle}"] if p.is_passenger else []
