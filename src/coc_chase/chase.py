@@ -431,6 +431,10 @@ class Chase:
             p.max_hp = p.hp
         if p.max_build is None:
             p.max_build = p.build
+        if "location" in changes:  # as set_location: stop accelerating, carry passengers, extend the layout
+            p.pedal = 0
+            self._carry(p)
+            self._pad(p.location)
         new = changes.get("name")
         if new:
             for names in (self.order, self.delayed, self.may_escape, *self.resolved_ties):
@@ -439,7 +443,8 @@ class Chase:
                 if o.vehicle == name:
                     o.vehicle = new
         if changes:
-            self.log_event(f"{name} edited: " + ", ".join(f"{k} {v}" for k, v in changes.items()))
+            shown = {**changes, **({"location": self.locations[p.location].name} if "location" in changes else {})}
+            self.log_event(f"{name} edited: " + ", ".join(f"{k} {v}" for k, v in shown.items()))
 
     def badges(self, name: str) -> list[str]:
         p = self.get(name)
@@ -567,6 +572,14 @@ class Chase:
         if self.ended:
             return None
         return next((p for p in self.turn_order() if p.actions_left > 0 or p.pedal or p.passenger_action), None)
+
+    def had_turn(self, name: str) -> bool:
+        """Comes before the current turn in turn order (nobody in setup or after the chase ends)."""
+        if self.round == 0 or self.ended:
+            return False
+        order = [p.name for p in self.turn_order()]
+        current = self.current_turn()
+        return order.index(name) < (order.index(current.name) if current else len(order))
 
     @mutation
     def delay(self, name: str) -> None:

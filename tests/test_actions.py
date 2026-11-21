@@ -1,4 +1,4 @@
-from coc_chase.chase import Chase
+from coc_chase.chase import Chase, Participant
 from test_hazards import mud_chase
 
 
@@ -71,3 +71,30 @@ def test_targets_are_participants_on_the_other_side():
     chase = apartment_chase()
     assert chase.targets("Harvey") == ["Cultist A", "Cultist B", "Cultist C"]
     assert chase.targets("Cultist A") == ["Harvey", "Brian", "Scott"]
+
+
+def test_had_turn_marks_participants_before_the_current_turn():
+    chase = mud_chase()  # Harvey DEX 55 acts before Farmer DEX 50
+    assert not chase.had_turn("Harvey") and not chase.had_turn("Farmer")
+    chase.delay("Harvey")
+    assert chase.current_turn().name == "Farmer"
+    assert not chase.had_turn("Harvey")  # delayed: still to act
+    chase.attack("Farmer", "Harvey")
+    chase.other_action("Farmer", "shouts")
+    assert chase.had_turn("Farmer") and not chase.had_turn("Harvey")
+    chase.end_round()
+    assert not chase.had_turn("Harvey") and not chase.had_turn("Farmer")
+
+
+def test_nobody_has_had_a_turn_in_setup_or_after_the_chase_ends():
+    setup = Chase()
+    setup.add(Participant("Harvey", "fleeing", dex=55, mov=6, speed_value=60))
+    assert not chase_had_any_turn(setup)
+    chase = mud_chase()
+    chase.move("Harvey")
+    chase.end_chase()
+    assert not chase_had_any_turn(chase)
+
+
+def chase_had_any_turn(chase):
+    return any(chase.had_turn(p.name) for p in chase.participants)
