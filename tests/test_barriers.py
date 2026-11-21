@@ -106,3 +106,17 @@ def test_track_edits_round_trip_and_undo():
     chase.undo()
     chase.undo()
     assert chase.to_json() == before
+
+
+def test_nameless_location_is_named_by_its_number():
+    chase = Chase()
+    chase.add_location(0)
+    chase.add_location(0, "")
+    assert chase.locations == ["Location 1", "Location 1"]
+    assert chase.log[-1] == "R0: Location 1 added"
+    chase.add_location(2, "  ")
+    assert chase.locations[2] == "Location 3"
+    chase.remove_location(2)
+    assert chase.log[-1] == "R0: Location 3 removed"
+    chase.add_location(0, "Barn")
+    assert chase.log[-1] == "R0: Barn added"

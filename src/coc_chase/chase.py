@@ -55,6 +55,10 @@ def success_level(roll: int, target: int) -> str:
     return "regular" if roll <= target else "failure"
 
 
+def default_location_name(index: int) -> str:
+    return f"Location {index + 1}"
+
+
 def fallback_targets(value: int) -> dict[str, int]:
     """Monster skill fallback: full, half or one-fifth of a characteristic (e.g. DEX)."""
     return {"full": value, "half": value // 2, "fifth": value // 5}
@@ -493,7 +497,7 @@ class Chase:
 
     def _pad(self, index: int) -> None:
         """Append blank locations until `index` exists."""
-        self.locations += [f"Location {i + 1}" for i in range(len(self.locations), index + 1)]
+        self.locations += [default_location_name(i) for i in range(len(self.locations), index + 1)]
 
     def _carry(self, vehicle: Participant) -> None:
         """Passengers ride along with their vehicle."""
@@ -544,12 +548,16 @@ class Chase:
 
     @mutation
     def add_location(self, index: int, name: str = "", description: str = "") -> None:
-        """Insert a location before `index`; everything from `index` on shifts one along."""
+        """Insert a location before `index`; everything from `index` on shifts one along.
+
+        A blank name becomes "Location <number>", like the locations padded in automatically.
+        """
+        name = name.strip() or default_location_name(index)
         self._shift(index, 1)
         self.locations.insert(index, name)
         if description:
             self.descriptions[index] = description
-        self.log_event(f"Location {name or index + 1} added")
+        self.log_event(f"{name} added")
 
     @mutation
     def edit_location(self, index: int, name: str, description: str = "") -> None:
@@ -568,7 +576,7 @@ class Chase:
         self._shift(index + 1, -1)
         for p in self.participants:
             p.location = min(p.location, len(self.locations) - 1)
-        self.log_event(f"Location {name} removed")
+        self.log_event(f"{name} removed")
 
     def _shift(self, start: int, delta: int) -> None:
         """Move participants, descriptions and hazards at index >= start by delta."""

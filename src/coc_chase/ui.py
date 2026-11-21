@@ -24,6 +24,15 @@ def refuse(reason: str) -> None:
     ui.notify(reason, type="warning")
 
 
+def refuse_blank(*fields) -> bool:
+    """Refuse (and return True) if a required number field is empty."""
+    for field in fields:
+        if field.value is None:
+            refuse(f"Fill in {field.props['label']}")
+            return True
+    return False
+
+
 def root() -> None:
     def act(action, *args) -> None:
         """Run a chase action, show the log entries it wrote, redraw."""
@@ -34,6 +43,12 @@ def root() -> None:
         else:
             notify(chase.last_entries)
         view.refresh()
+
+    def set_number(setter, name: str, field, offset: int = 0) -> None:
+        """Inline Keeper override from a number field; a blank one is refused and redrawn with the real value."""
+        if refuse_blank(field):
+            return view.refresh()
+        act(setter, name, int(field.value) + offset)
 
     def undo() -> None:
         undone = chase.undo()
@@ -89,16 +104,17 @@ def root() -> None:
             target = ui.number("Target", value=50, precision=0)
             bonus = ui.select({-2: "2 penalty", -1: "1 penalty", 0: "none", 1: "1 bonus", 2: "2 bonus"},
                               value=0, label="Bonus/penalty")
-            ui.button("Roll D100", on_click=lambda: act(
+            ui.button("Roll D100", on_click=lambda: refuse_blank(target) or act(
                 chase.roll_d100, int(target.value), bonus.value, label.value))
         with ui.row().classes("items-end"):
             char = ui.number("Characteristic (fallback)", value=50, precision=0)
             for key, text in (("full", "Full"), ("half", "½"), ("fifth", "⅕")):
-                ui.button(text, on_click=lambda k=key: target.set_value(fallback_targets(int(char.value))[k]))
+                ui.button(text, on_click=lambda k=key: refuse_blank(char) or target.set_value(
+                    fallback_targets(int(char.value))[k]))
         with ui.row().classes("items-end"):
             count = ui.number("N", value=1, precision=0, min=1)
             sides = ui.number("D", value=6, precision=0, min=2)
-            ui.button("Roll NxDy", on_click=lambda: act(
+            ui.button("Roll NxDy", on_click=lambda: refuse_blank(count, sides) or act(
                 chase.roll, int(count.value), int(sides.value), label.value))
 
     def edit(p: Participant) -> None:
@@ -117,14 +133,14 @@ def root() -> None:
             vehicle = ui.select([o.name for o in chase.participants if o.is_vehicle and o is not p],
                                 value=p.vehicle, label="Passenger in", clearable=True)
             notes = ui.input("Notes", value=p.notes)
-            ui.button("Save", on_click=lambda: act(
+            ui.button("Save", on_click=lambda: refuse_blank(dex, mov, speed) or act(
                 chase.edit_participant, p.name, name=name.value, side=side.value, dex=int(dex.value),
                 mov=int(mov.value), speed_value=int(speed.value), hp=whole(hp.value),
                 build=whole(build.value), vehicle=vehicle.value, notes=notes.value or "",
             ) if name.value else refuse("Name can't be empty"))
 
     def participant_form():
-        """New-participant inputs. Returns a function giving the Participant, or None without a name."""
+        """New-participant inputs. Returns a function giving the Participant, or None (refused) if incomplete."""
         name = ui.input("Name")
         side = ui.select(["pursuer", "fleeing"], value="pursuer", label="Side")
         dex = ui.number("DEX", value=50, precision=0)
@@ -137,6 +153,8 @@ def root() -> None:
 
         def make() -> Participant | None:
             if not name.value:
+                return refuse("Participant needs a name")
+            if refuse_blank(dex, mov, speed):
                 return None
             max_hp = int(hp.value) if hp.value is not None else None
             max_build = int(build.value) if build.value is not None else None
@@ -159,14 +177,15 @@ def root() -> None:
                 ui.button("Roll (NPC)", on_click=lambda n=p.name: act(chase.roll_speed, n))
         with ui.row().classes("items-end"):
             new = participant_form()
-            ui.button("Add", on_click=lambda: act(chase.add, new()) if new() else refuse(
-                "Participant needs a name"))
+            ui.button("Add", on_click=lambda: (p := new()) and act(chase.add, p))
         for n in chase.escaped:
             ui.label(f"{n} escapes: no chase is played.").classes("text-positive text-h6")
 
         def establish() -> None:
             if not chase.ready_to_establish():
                 return refuse("Needs a pursuer, a fleeing character and every speed roll result")
+            if refuse_blank(start_location):
+                return
             act(chase.establish, start_range.value, int(start_location.value) - 1)
 
         track()
@@ -288,13 +307,13 @@ def root() -> None:
                     ui.badge(b, color="orange")
                 if p.is_vehicle:
                     ui.number("Build", value=p.build, precision=0).on(
-                        "change", lambda e, n=p.name: act(chase.set_build, n, int(e.sender.value)))
+                        "change", lambda e, n=p.name: set_number(chase.set_build, n, e.sender))
                 ui.number("Location", value=p.location + 1, precision=0, min=1).on(
-                    "change", lambda e, n=p.name: act(chase.set_location, n, int(e.sender.value) - 1))
+                    "change", lambda e, n=p.name: set_number(chase.set_location, n, e.sender, -1))
                 ui.number("Actions", value=p.actions_left, precision=0, min=0).on(
-                    "change", lambda e, n=p.name: act(chase.set_actions, n, int(e.sender.value)))
+                    "change", lambda e, n=p.name: set_number(chase.set_actions, n, e.sender))
                 ui.number("Debt", value=p.debt, precision=0, min=0).on(
-                    "change", lambda e, n=p.name: act(chase.set_debt, n, int(e.sender.value)))
+                    "change", lambda e, n=p.name: set_number(chase.set_debt, n, e.sender))
                 ui.button("Remove", on_click=lambda n=p.name: act(chase.remove, n)).props("dense flat")
                 if p is turn:
                     hazard_or_move(p)
@@ -315,9 +334,8 @@ def root() -> None:
             result = ui.select({"npc": "NPC roll", "extreme": "extreme", "success": "success", "fail": "fail"},
                                value="npc", label="Speed result")
             location = ui.number("Location", value=1, precision=0, min=1)
-            ui.button("Join", on_click=lambda: act(
-                chase.join, new(), int(location.value) - 1, None if result.value == "npc" else result.value,
-            ) if new() else refuse("Participant needs a name"))
+            ui.button("Join", on_click=lambda: (p := new()) and not refuse_blank(location) and act(
+                chase.join, p, int(location.value) - 1, None if result.value == "npc" else result.value))
 
     def other_actions(p: Participant) -> None:
         others = chase.targets(p.name)
