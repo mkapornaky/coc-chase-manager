@@ -96,6 +96,19 @@ def test_undo_after_move_restores_position_and_log():
     assert chase.current_turn().name == "Harvey"
 
 
+def test_mutation_entries_are_kept_for_notification_and_undo():
+    chase = Chase()
+    assert chase.undo() is None
+    chase = harvey_vs_farmer("fail", "fail")
+    start = len(chase.log)
+    chase.move("Harvey")
+    chase.move("Farmer")
+    entries = chase.log[start + 1:]
+    assert entries and chase.last_entries == entries
+    assert chase.undo() == entries
+    assert len(chase.log) == start + 1
+
+
 def test_every_mutation_autosaves_and_load_resumes(tmp_path):
     path = tmp_path / "autosave.json"
     chase = Chase.load(path)
