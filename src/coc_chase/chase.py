@@ -3,10 +3,11 @@
 import functools
 import json
 import random
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
+from enum import StrEnum
 from pathlib import Path
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2  # 1: locations, descriptions and hazards kept apart; still read
 
 
 
@@ -34,10 +35,42 @@ def mutation(fn):
     return wrapper
 
 
-SPEED_MOD = {"extreme": 1, "success": 0, "fail": -1}
+class Side(StrEnum):
+    PURSUER = "pursuer"
+    FLEEING = "fleeing"
+
+
+class SpeedResult(StrEnum):
+    EXTREME = "extreme"
+    SUCCESS = "success"
+    FAIL = "fail"
+
+
+class HazardKind(StrEnum):
+    HAZARD = "hazard"
+    BARRIER = "barrier"  # blocks until passed or broken
+
+
+class Difficulty(StrEnum):
+    REGULAR = "regular"
+    HARD = "hard"
+    EXTREME = "extreme"
+
+
+class Caller(StrEnum):
+    """Who may call the next sudden hazard."""
+    KEEPER = "keeper"
+    PLAYERS = "players"
+
+
+def _optional(enum, value):
+    return None if value is None else enum(value)
+
+
+SPEED_MOD = {SpeedResult.EXTREME: 1, SpeedResult.SUCCESS: 0, SpeedResult.FAIL: -1}
 # D100 result level -> speed result
-SPEED_FROM_LEVEL = {"critical": "extreme", "extreme": "extreme", "hard": "success",
-                    "regular": "success", "failure": "fail", "fumble": "fail"}
+SPEED_FROM_LEVEL = {"critical": SpeedResult.EXTREME, "extreme": SpeedResult.EXTREME, "hard": SpeedResult.SUCCESS,
+                    "regular": SpeedResult.SUCCESS, "failure": SpeedResult.FAIL, "fumble": SpeedResult.FAIL}
 LEVELS = list(SPEED_FROM_LEVEL)  # best first
 PEDAL_DISTANCES = range(2, 6)  # Pedal to the Metal: 2-5 locations
 
@@ -70,24 +103,46 @@ def _dice(n: int, kind: str) -> str:
 
 @dataclass
 class Hazard:
-    """Obstacle in the gap between location i and i+1 (keyed by i in Chase.hazards)."""
+    """Obstacle between a location and the next one (that location's hazard_after)."""
     name: str
     skill: str = ""  # suggested skill(s), free text
-    difficulty: str = "regular"  # "regular" / "hard" / "extreme"
+    difficulty: Difficulty = Difficulty.REGULAR
     notes: str = ""
-    kind: str = "hazard"  # "hazard" or "barrier" (blocks until passed or broken)
+    kind: HazardKind = HazardKind.HAZARD
     hp: int | None = None  # barriers only
     max_hp: int | None = None
+
+    def __post_init__(self):  # values loaded from JSON arrive as plain strings
+        self.difficulty = Difficulty(self.difficulty)
+        self.kind = HazardKind(self.kind)
+
+
+@dataclass
+class Location:
+    name: str
+    description: str = ""  # read-aloud text
+    hazard_after: Hazard | None = None  # between this location and the next
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Location":
+        hazard = data.get("hazard_after")
+        return cls(str(data["name"]), data.get("description", ""), Hazard(**hazard) if hazard else None)
+
+
+def locations_from_v1(locations: list[dict], hazards: dict) -> list[Location]:
+    """Version 1 kept hazards apart, keyed by gap index (gap i = after location i)."""
+    by_gap = {int(i): h for i, h in hazards.items()}
+    return [Location.from_dict(loc | {"hazard_after": by_gap.get(i)}) for i, loc in enumerate(locations)]
 
 
 @dataclass
 class Participant:
     name: str
-    side: str  # "pursuer" or "fleeing"
+    side: Side
     dex: int
     mov: int
     speed_value: int
-    speed_result: str | None = None  # "extreme" / "success" / "fail"
+    speed_result: SpeedResult | None = None
     location: int = 0  # index into Chase.locations
     actions_left: int = 0
     debt: int = 0  # lost movement actions carried into the next round
@@ -101,6 +156,10 @@ class Participant:
     vehicle: str | None = None  # passenger in this vehicle: no speed roll, rides along, 1 action
     passenger_action: bool = False  # passengers only: this round's one action is still unused
     notes: str = ""  # Keeper's free text: skills, conditions
+
+    def __post_init__(self):  # values loaded from JSON arrive as plain strings
+        self.side = Side(self.side)
+        self.speed_result = _optional(SpeedResult, self.speed_result)
 
     @property
     def is_vehicle(self) -> bool:
@@ -118,9 +177,7 @@ class Participant:
 @dataclass
 class Chase:
     participants: list[Participant] = field(default_factory=list)
-    locations: list[str] = field(default_factory=list)
-    descriptions: dict[int, str] = field(default_factory=dict)  # location index -> read-aloud text
-    hazards: dict[int, Hazard] = field(default_factory=dict)  # gap i = between location i and i+1
+    locations: list[Location] = field(default_factory=list)
     escaped: list[str] = field(default_factory=list)
     may_escape: list[str] = field(default_factory=list)
     unable_to_join: list[str] = field(default_factory=list)  # pursuers too slow to join mid-chase
@@ -128,7 +185,7 @@ class Chase:
     round: int = 0  # 0 = not established yet
     slowest_mov: int = 0
     delayed: list[str] = field(default_factory=list)  # this round only, acting after everyone else
-    sudden_caller: str | None = None  # "keeper" / "players" may call the next sudden hazard; None = either
+    sudden_caller: Caller | None = None  # None = either side may call the next sudden hazard
     ended: bool = False
     investigators: list[str] = field(default_factory=list)  # names imported from a party; not saved as NPCs
     log:list[str] = field(default_factory=list)
@@ -139,6 +196,9 @@ class Chase:
     rng: random.Random = field(default_factory=random.Random, repr=False, compare=False)
     _in_mutation: bool = field(default=False, repr=False, compare=False)
 
+    def __post_init__(self):
+        self.sudden_caller = _optional(Caller, self.sudden_caller)
+
     def to_json(self) -> str:
         """Full live state. Fields with compare=False (rng, undo history, autosave path) are not state."""
         data = {f.name: getattr(self, f.name) for f in fields(self) if f.compare}
@@ -147,17 +207,25 @@ class Chase:
     @classmethod
     def from_json(cls, text: str) -> "Chase":
         data = json.loads(text)
-        if data.pop("version", None) != FORMAT_VERSION:
+        version = data.pop("version", None)
+        if version == 1:
+            descriptions = data.pop("descriptions", {})
+            names = [{"name": n, "description": descriptions.get(str(i), "")} for i, n in enumerate(data["locations"])]
+            data["locations"] = locations_from_v1(names, data.pop("hazards", {}))
+        elif version == FORMAT_VERSION:
+            data["locations"] = [Location.from_dict(loc) for loc in data["locations"]]
+        else:
             raise ValueError("unsupported chase file version")
         data["participants"] = [Participant(**p) for p in data["participants"]]
-        data["hazards"] = {int(i): Hazard(**h) for i, h in data["hazards"].items()}
-        data["descriptions"] = {int(i): d for i, d in data["descriptions"].items()}
         return cls(**data)
 
     @classmethod
     def load(cls, path: Path) -> "Chase":
         """Resume the autosave at `path` if present, else a blank chase that autosaves there."""
-        chase = cls.from_json(path.read_text()) if path.exists() else cls()
+        try:
+            chase = cls.from_json(path.read_text()) if path.exists() else cls()
+        except ValueError as e:
+            raise ValueError(f"{path.name}: {e}") from e
         chase.autosave = path
         return chase
 
@@ -231,9 +299,9 @@ class Chase:
         return next(p for p in self.participants if p.name == name)
 
     @mutation
-    def set_speed_result(self, name: str, result: str) -> None:
+    def set_speed_result(self, name: str, result: SpeedResult) -> None:
         p = self.get(name)
-        p.speed_result = result
+        p.speed_result = SpeedResult(result)
         self.log_event(f"{name} speed roll {result}, MOV {p.adjusted_mov}")
 
     @mutation
@@ -245,8 +313,8 @@ class Chase:
         slowest fleeing character are left behind (removed). The slowest pursuer starts on
         `start_location`, the slowest fleeing character `start_range` ahead of the foremost pursuer.
         """
-        pursuers = [p for p in self.participants if p.side == "pursuer" and not p.is_passenger]
-        fleeing = [p for p in self.participants if p.side == "fleeing" and not p.is_passenger]
+        pursuers = [p for p in self.participants if p.side == Side.PURSUER and not p.is_passenger]
+        fleeing = [p for p in self.participants if p.side == Side.FLEEING and not p.is_passenger]
         fastest_pursuer = max(p.adjusted_mov for p in pursuers)
         faster = [p.name for p in fleeing if p.adjusted_mov > fastest_pursuer]
         if faster and len(pursuers) == len(fleeing) == 1:
@@ -261,7 +329,7 @@ class Chase:
             if p.adjusted_mov < slowest_fleeing:
                 self.participants.remove(p)
                 self.log_event(f"{p.name} is left behind")
-        pursuers = [p for p in self.participants if p.side == "pursuer" and not p.is_passenger]
+        pursuers = [p for p in self.participants if p.side == Side.PURSUER and not p.is_passenger]
         slowest_pursuer = min((p.adjusted_mov for p in pursuers), default=fastest_pursuer)
         for p in pursuers:
             p.location = start_location + p.adjusted_mov - slowest_pursuer
@@ -278,7 +346,7 @@ class Chase:
         self.log_event(f"Chase established, range {start_range}")
 
     @mutation
-    def join(self, participant: Participant, location: int, speed_result: str | None = None) -> None:
+    def join(self, participant: Participant, location: int, speed_result: SpeedResult | None = None) -> None:
         """Join a running chase (rulebook p. 142). speed_result None = NPC speed roll.
 
         A pursuer slower than the slowest fleeing character is flagged in `unable_to_join`
@@ -294,8 +362,8 @@ class Chase:
             self.roll_speed(p.name)
         else:
             self.set_speed_result(p.name, speed_result)
-        fleeing = [o.adjusted_mov for o in self.participants if o.side == "fleeing" and not o.is_passenger]
-        if p.side == "pursuer" and fleeing and p.adjusted_mov < min(fleeing):
+        fleeing = [o.adjusted_mov for o in self.participants if o.side == Side.FLEEING and not o.is_passenger]
+        if p.side == Side.PURSUER and fleeing and p.adjusted_mov < min(fleeing):
             self.participants.remove(p)
             self.unable_to_join.append(p.name)
             self.log_event(f"{p.name} is too slow to join")
@@ -316,7 +384,7 @@ class Chase:
         self.get(name).pedal = 0
         self._carry(self.get(name))
         self._pad(location)
-        self.log_event(f"{name} placed on {self.locations[location]}")
+        self.log_event(f"{name} placed on {self.locations[location].name}")
 
     @mutation
     def set_actions(self, name: str, actions: int) -> None:
@@ -347,8 +415,9 @@ class Chase:
             raise ValueError(f"unknown participant fields: {', '.join(sorted(unknown))}")
         p = self.get(name)
         changes = {k: v for k, v in changes.items() if getattr(p, k) != v}
-        for k, v in changes.items():
-            setattr(p, k, v)
+        edited = replace(p, **changes)  # validates (e.g. an unknown side) before anything changes
+        for k in changes:
+            setattr(p, k, getattr(edited, k))
         if p.max_hp is None:
             p.max_hp = p.hp
         if p.max_build is None:
@@ -378,7 +447,7 @@ class Chase:
     def ready_to_establish(self) -> bool:
         """Both sides present and every speed roll in (passengers make none)."""
         sides = {p.side for p in self.participants if not p.is_passenger}
-        return sides == {"pursuer", "fleeing"} and all(
+        return sides == set(Side) and all(
             p.speed_result for p in self.participants if not p.is_passenger)
 
     def targets(self, name: str) -> list[str]:
@@ -465,7 +534,7 @@ class Chase:
         p.actions_left -= 1
         p.pedal = 0
         self._advance(p)
-        self.log_event(f"{name} moves → {self.locations[p.location]}")
+        self.log_event(f"{name} moves → {self.locations[p.location].name}")
 
     @mutation
     def pedal_to_the_metal(self, name: str, distance: int) -> None:
@@ -481,11 +550,11 @@ class Chase:
         text += self._spend(p, 1)
         p.pedal_penalty = penalty
         self._accelerate(p, distance)
-        self.log_event(f"{text} → {self.locations[p.location]}")
+        self.log_event(f"{text} → {self.locations[p.location].name}")
 
     def _accelerate(self, p: Participant, distance: int) -> None:
         """Advance up to `distance` locations, stopping in front of any hazard."""
-        while distance and p.location not in self.hazards:
+        while distance and not self.locations[p.location].hazard_after:
             self._advance(p)
             distance -= 1
         p.pedal = distance
@@ -497,7 +566,7 @@ class Chase:
 
     def _pad(self, index: int) -> None:
         """Append blank locations until `index` exists."""
-        self.locations += [default_location_name(i) for i in range(len(self.locations), index + 1)]
+        self.locations += [Location(default_location_name(i)) for i in range(len(self.locations), index + 1)]
 
     def _carry(self, vehicle: Participant) -> None:
         """Passengers ride along with their vehicle."""
@@ -521,8 +590,8 @@ class Chase:
     @mutation
     def add_hazard(self, gap: int, hazard: Hazard) -> None:
         """Place (or replace) the hazard between location `gap` and `gap + 1`."""
-        self.hazards[gap] = hazard
-        self.log_event(f"Hazard {hazard.name} placed after {self.locations[gap]}")
+        self.locations[gap].hazard_after = hazard
+        self.log_event(f"Hazard {hazard.name} placed after {self.locations[gap].name}")
 
     @mutation
     def roll_random_hazard(self, gap: int, bonus: int = 0) -> None:
@@ -531,20 +600,21 @@ class Chase:
         bonus = 1 for a quiet environment, -1 for an especially hazardous one.
         """
         roll = self._d100(bonus)
-        difficulty = ("extreme" if roll >= 96 else "hard" if roll >= 85
-                      else "regular" if roll >= 60 else None)
+        difficulty = (Difficulty.EXTREME if roll >= 96 else Difficulty.HARD if roll >= 85
+                      else Difficulty.REGULAR if roll >= 60 else None)
         if difficulty:
-            self.hazards[gap] = Hazard("random hazard", difficulty=difficulty)
+            self.locations[gap].hazard_after = Hazard("random hazard", difficulty=difficulty)
         dice = f" ({abs(bonus)} {'bonus' if bonus > 0 else 'penalty'})" if bonus else ""
-        self.log_event(f"Random hazard after {self.locations[gap]}{dice} D100: {roll} {difficulty or 'clear'}")
+        self.log_event(f"Random hazard after {self.locations[gap].name}{dice} D100: {roll} {difficulty or 'clear'}")
 
     @mutation
     def remove_hazard(self, gap: int) -> None:
-        hazard = self.hazards.pop(gap)
+        location = self.locations[gap]
+        hazard, location.hazard_after = location.hazard_after, None
         for p in self.participants:
             if p.location == gap:
                 p.pedal = 0  # stopped in front of it: the acceleration is over
-        self.log_event(f"Hazard {hazard.name} removed after {self.locations[gap]}")
+        self.log_event(f"Hazard {hazard.name} removed after {location.name}")
 
     @mutation
     def add_location(self, index: int, name: str = "", description: str = "") -> None:
@@ -554,42 +624,32 @@ class Chase:
         """
         name = name.strip() or default_location_name(index)
         self._shift(index, 1)
-        self.locations.insert(index, name)
-        if description:
-            self.descriptions[index] = description
+        self.locations.insert(index, Location(name, description))
         self.log_event(f"{name} added")
 
     @mutation
     def edit_location(self, index: int, name: str, description: str = "") -> None:
-        self.locations[index] = name
-        self.descriptions.pop(index, None)
-        if description:
-            self.descriptions[index] = description
+        self.locations[index].name = name
+        self.locations[index].description = description
         self.log_event(f"Location {index + 1} is now {name}")
 
     @mutation
     def remove_location(self, index: int) -> None:
         """Drop a location and the hazard after it. Participants on it stay on the index (the next one)."""
-        name = self.locations.pop(index)
-        self.descriptions.pop(index, None)
-        self.hazards.pop(index, None)
+        location = self.locations.pop(index)
         self._shift(index + 1, -1)
         for p in self.participants:
             p.location = min(p.location, len(self.locations) - 1)
-        self.log_event(f"{name} removed")
+        self.log_event(f"{location.name} removed")
 
     def _shift(self, start: int, delta: int) -> None:
-        """Move participants, descriptions and hazards at index >= start by delta."""
+        """Move participants on index >= start by delta."""
         for p in self.participants:
             if p.location >= start:
                 p.location += delta
-        for d in (self.descriptions, self.hazards):
-            moved = {i + delta if i >= start else i: v for i, v in d.items()}
-            d.clear()
-            d.update(moved)
 
     def hazard_ahead(self, name: str) -> Hazard | None:
-        return self.hazards.get(self.get(name).location)
+        return self.locations[self.get(name).location].hazard_after
 
     @mutation
     def resolve_hazard(self, name: str, passed: bool, bonus: int = 0,
@@ -607,7 +667,7 @@ class Chase:
         cost = 0 if pedal else 1
         bonus = max(0, min(bonus, 2, p.actions_left - cost))  # only actions actually left, never debt
         cost += bonus
-        blocked = hazard.kind == "barrier" and not passed
+        blocked = hazard.kind == HazardKind.BARRIER and not passed
         text = f"{name} {'passes' if passed else 'fails'} {hazard.kind} {hazard.name}"
         if bonus:
             text += f" ({bonus} bonus {'die' if bonus == 1 else 'dice'})"
@@ -632,12 +692,12 @@ class Chase:
         p = self.get(name)
         if damage is None:
             damage = self.roll(p.build, 10, label=f"{name} barrier damage")
-        gap = p.location
-        barrier = self.hazards[gap]
+        location = self.locations[p.location]
+        barrier = location.hazard_after
         barrier.hp = max(0, barrier.hp - damage)
         text = f"{name} deals {damage} damage to barrier {barrier.name} ({barrier.hp}/{barrier.max_hp} HP)"
         if barrier.hp == 0:
-            del self.hazards[gap]
+            location.hazard_after = None
             text += ", broken"
         self.log_event(text + self._spend(p, 1))
 
@@ -689,9 +749,10 @@ class Chase:
         self.log_event(f"{name} maneuvers {target}{spent}{outcome}" + self._spend(t, lost))
 
     @mutation
-    def call_sudden_hazard(self, caller: str) -> None:
-        """`caller` ("keeper" / "players") calls a sudden hazard; the other side calls the next one."""
-        self.sudden_caller = "players" if caller == "keeper" else "keeper"
+    def call_sudden_hazard(self, caller: Caller) -> None:
+        """`caller` calls a sudden hazard; the other side calls the next one."""
+        caller = Caller(caller)
+        self.sudden_caller = Caller.PLAYERS if caller == Caller.KEEPER else Caller.KEEPER
         self.log_event(f"Sudden hazard called by {caller}")
 
     @mutation

@@ -2,12 +2,12 @@ import json
 
 import pytest
 
-from coc_chase.chase import Chase, Hazard, Participant
+from coc_chase.chase import Chase, Hazard, Location, Participant
 from coc_chase.files import import_party, list_files, load_prep, new_chase, save_prep
 
 
 def prepped_chase() -> Chase:
-    chase = Chase(locations=["Market", "Alley", "Docks"], descriptions={1: "Dark and wet."})
+    chase = Chase(locations=[Location("Market"), Location("Alley", "Dark and wet."), Location("Docks")])
     chase.add_hazard(0, Hazard("Crowd", "Dodge", "hard"))
     chase.add_hazard(1, Hazard("Gate", kind="barrier", hp=10, max_hp=10))
     chase.add(Participant("Cultist", "pursuer", dex=50, mov=8, speed_value=50, hp=11, max_hp=11))
@@ -20,8 +20,6 @@ def test_save_as_then_load_keeps_locations_hazards_and_npcs(tmp_path):
     loaded = Chase()
     load_prep(loaded, tmp_path / "docks.json")
     assert loaded.locations == original.locations
-    assert loaded.descriptions == original.descriptions
-    assert loaded.hazards == original.hazards
     assert loaded.participants == original.participants
 
 
@@ -74,19 +72,68 @@ def test_list_files_gives_json_names_and_tolerates_missing_folder(tmp_path):
 def test_blank_chase_clears_everything_and_is_undoable():
     chase = prepped_chase()
     new_chase(chase)
-    assert chase.locations == [] and chase.participants == [] and chase.hazards == {}
+    assert chase.locations == [] and chase.participants == []
     chase.undo()
-    assert chase.locations == ["Market", "Alley", "Docks"]
+    assert [loc.name for loc in chase.locations] == ["Market", "Alley", "Docks"]
 
 
-def test_minimal_hand_written_chase_file_loads(tmp_path):
-    path = write(tmp_path / "hand.json", {"version": 1, "locations": [{"name": "Road"}, {"name": "Bridge"}],
-                                          "hazards": {"0": {"name": "Mud"}}})
+def test_minimal_hand_written_version_1_chase_file_loads(tmp_path):
+    path = write(tmp_path / "hand.json", {"version": 1, "locations": [
+        {"name": "Road"}, {"name": "Bridge", "description": "Rickety"}], "hazards": {"0": {"name": "Mud"}}})
     chase = Chase()
     load_prep(chase, path)
-    assert chase.locations == ["Road", "Bridge"]
-    assert chase.hazards == {0: Hazard("Mud")}
+    assert chase.locations == [Location("Road", hazard_after=Hazard("Mud")), Location("Bridge", "Rickety")]
     assert chase.participants == []
+
+
+def test_minimal_hand_written_version_2_chase_file_loads(tmp_path):
+    path = write(tmp_path / "hand.json", {"version": 2, "locations": [
+        {"name": "Road", "hazard_after": {"name": "Mud"}}, {"name": "Bridge", "description": "Rickety", "hazard_after": {}}]})
+    chase = Chase()
+    load_prep(chase, path)
+    assert chase.locations == [Location("Road", hazard_after=Hazard("Mud")), Location("Bridge", "Rickety")]
+
+
+def test_saved_chase_file_is_version_2_with_hazards_on_their_locations(tmp_path):
+    save_prep(prepped_chase(), tmp_path / "docks.json")
+    data = json.loads((tmp_path / "docks.json").read_text())
+    assert data["version"] == 2
+    assert "hazards" not in data
+    assert data["locations"][1]["description"] == "Dark and wet."
+    assert data["locations"][1]["hazard_after"]["name"] == "Gate"
+
+
+def test_version_2_party_imports(tmp_path):
+    chase = Chase()
+    import_party(chase, write(tmp_path / "party.json", PARTY | {"version": 2}))
+    assert chase.investigators == ["Harvey"]
+
+
+V1_AUTOSAVE = {
+    "version": 1, "round": 1, "slowest_mov": 7,
+    "participants": [{"name": "Harvey", "side": "fleeing", "dex": 60, "mov": 7, "speed_value": 55,
+                      "speed_result": "success", "location": 2, "actions_left": 1}],
+    "locations": ["Market", "Alley", "Docks"],
+    "descriptions": {"1": "Dark and wet."},
+    "hazards": {"0": {"name": "Crowd", "skill": "Dodge", "difficulty": "hard"},
+                "2": {"name": "Gate", "kind": "barrier", "hp": 10, "max_hp": 10}},
+    "sudden_caller": "keeper", "log": ["R1: Chase established, range 2"],
+}
+
+
+def test_version_1_autosave_resumes_with_descriptions_and_hazards_on_their_locations(tmp_path):
+    chase = Chase.load(write(tmp_path / "autosave.json", V1_AUTOSAVE))
+    assert chase.locations == [
+        Location("Market", hazard_after=Hazard("Crowd", "Dodge", "hard")),
+        Location("Alley", "Dark and wet."),
+        Location("Docks", hazard_after=Hazard("Gate", kind="barrier", hp=10, max_hp=10)),
+    ]
+    assert chase.hazard_ahead("Harvey").name == "Gate"
+    assert (chase.round, chase.sudden_caller, chase.log) == (1, "keeper", V1_AUTOSAVE["log"])
+    assert json.loads(chase.to_json())["version"] == 2
+
+
+BAD_SIDE = {"name": "Cultist", "side": "persuer", "dex": 50, "mov": 8, "speed_value": 50}
 
 
 @pytest.mark.parametrize("content", [
@@ -97,6 +144,8 @@ def test_minimal_hand_written_chase_file_loads(tmp_path):
     json.dumps({"version": 1, "locations": ["Road"]}),
     json.dumps({"version": 1, "locations": [], "hazards": {"x": {"name": "Mud"}}}),
     json.dumps({"version": 1, "locations": [], "npcs": [{"name": "Cultist", "speed": 50}]}),
+    json.dumps({"version": 1, "locations": [], "npcs": [BAD_SIDE], "investigators": [BAD_SIDE]}),
+    json.dumps({"version": 1, "locations": [{"name": "Road"}], "hazards": {"0": {"name": "Mud", "kind": "bog"}}}),
 ])
 def test_invalid_chase_file_raises_value_error_and_leaves_chase_alone(tmp_path, content):
     path = tmp_path / "bad.json"
@@ -117,3 +166,9 @@ def test_participant_notes_are_saved_in_prep_files(tmp_path):
     loaded = Chase()
     load_prep(loaded, tmp_path / "notes.json")
     assert loaded.get("Cultist").notes == "Knife 40%"
+
+
+def test_autosave_with_an_unknown_value_is_refused_naming_the_file(tmp_path):
+    data = json.loads(Chase().to_json()) | {"sudden_caller": "dealer"}
+    with pytest.raises(ValueError, match="autosave.json"):
+        Chase.load(write(tmp_path / "autosave.json", data))

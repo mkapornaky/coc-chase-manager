@@ -41,3 +41,12 @@ def test_editing_an_unknown_field_raises():
     chase = apartment_chase()
     with pytest.raises(ValueError):
         chase.edit_participant("Harvey", speed=3)
+
+
+def test_editing_to_an_unknown_side_is_refused_and_changes_nothing():
+    chase = Chase()
+    chase.add(Participant("Harvey", "fleeing", dex=60, mov=7, speed_value=55))
+    before = chase.to_json()
+    with pytest.raises(ValueError):
+        chase.edit_participant("Harvey", side="persuer", dex=70)
+    assert chase.to_json() == before

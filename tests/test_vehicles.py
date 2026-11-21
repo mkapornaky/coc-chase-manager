@@ -75,7 +75,7 @@ def test_vehicle_smashes_barrier_with_1d10_per_build():
     chase.rng = FixedRng(3, 4, 5, 6, 7)
     chase.add_hazard(0, Hazard("roadblock", kind="barrier", hp=30, max_hp=30))
     chase.damage_barrier("Police 1")
-    assert chase.hazards[0].hp == 5
+    assert chase.locations[0].hazard_after.hp == 5
     assert chase.log[-2] == "R1: Police 1 barrier damage 5D10: 25"
 
 
@@ -231,7 +231,7 @@ def stopped_at_truck():
 ])
 def test_acceleration_ends_clear_pedal_state(end):
     chase = stopped_at_truck()
-    chase.hazards[1] = Hazard("gate", kind="barrier", hp=20, max_hp=20)
+    chase.locations[1].hazard_after = Hazard("gate", kind="barrier", hp=20, max_hp=20)
     end(chase)
     assert chase.get("Police 1").pedal == 0
     assert not any(b.startswith("pedal") for b in chase.badges("Police 1"))

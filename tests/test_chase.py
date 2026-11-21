@@ -72,7 +72,7 @@ def test_json_round_trip_gives_equal_state():
     chase = harvey_vs_farmer("fail", "fail")
     chase.move("Harvey")
     data = json.loads(chase.to_json())
-    assert data["version"] == 1
+    assert data["version"] == 2
     assert Chase.from_json(chase.to_json()) == chase
 
 

@@ -1,4 +1,4 @@
-from coc_chase.chase import Chase, Hazard, Participant
+from coc_chase.chase import Chase, Hazard, Location, Participant
 from test_dice import FixedRng
 
 
@@ -18,7 +18,7 @@ def test_fence_harvey_deals_3_fence_drops_to_2_and_harvey_stays():
     chase = fence_chase()
     chase.damage_barrier("Harvey", 3)
     harvey = chase.get("Harvey")
-    assert chase.hazards[2].hp == 2
+    assert chase.hazard_ahead("Harvey").hp == 2
     assert harvey.location == 2
     assert harvey.actions_left == 0
     assert chase.log[-1] == "R1: Harvey deals 3 damage to barrier fence (2/5 HP)"
@@ -55,20 +55,28 @@ def test_moving_past_the_last_location_appends_a_blank_location():
 
 
 def test_locations_can_be_inserted_edited_and_removed_shifting_track():
-    chase = fence_chase()  # Farmer on 0, Harvey on 2, fence on gap 2
+    chase = fence_chase()  # Farmer on 0, Harvey on 2, fence after location 2
     chase.add_location(1, "Barn", "Smells of hay")
-    assert chase.locations[1] == "Barn"
-    assert chase.descriptions == {1: "Smells of hay"}
+    assert chase.locations[1] == Location("Barn", "Smells of hay")
     assert chase.get("Harvey").location == 3
     assert chase.get("Farmer").location == 0
     assert chase.hazard_ahead("Harvey").name == "fence"
     chase.edit_location(1, "Old barn", "Roof caved in")
-    assert (chase.locations[1], chase.descriptions[1]) == ("Old barn", "Roof caved in")
+    assert chase.locations[1] == Location("Old barn", "Roof caved in")
     chase.remove_location(1)
-    assert "Old barn" not in chase.locations
-    assert chase.descriptions == {}
+    assert "Old barn" not in [loc.name for loc in chase.locations]
     assert chase.get("Harvey").location == 2
     assert chase.hazard_ahead("Harvey").name == "fence"
+
+
+def test_a_location_keeps_its_description_and_hazard_when_the_track_changes():
+    chase = Chase(locations=[Location("Market", hazard_after=Hazard("Crowd")), Location("Alley", "Dark"),
+                             Location("Docks", hazard_after=Hazard("Gate"))])
+    chase.add_location(0, "Square")
+    assert chase.locations[1] == Location("Market", hazard_after=Hazard("Crowd"))
+    chase.remove_location(1)  # Market goes, and the Crowd after it with it
+    assert chase.locations == [Location("Square"), Location("Alley", "Dark"),
+                               Location("Docks", hazard_after=Hazard("Gate"))]
 
 
 def test_hazards_can_be_edited_and_removed():
@@ -83,17 +91,17 @@ def test_hazards_can_be_edited_and_removed():
 def test_random_hazard_fills_gap_with_rolled_difficulty_and_logs_roll():
     chase = fence_chase(rng=FixedRng(5, 8))  # units 5, tens 8: 85
     chase.roll_random_hazard(0)
-    assert chase.hazards[0].difficulty == "hard"
+    assert chase.locations[0].hazard_after.difficulty == "hard"
     assert chase.log[-1] == "R1: Random hazard after Location 1 D100: 85 hard"
 
 
 def test_random_hazard_penalty_die_keeps_higher_and_clear_keeps_the_existing_hazard():
     chase = fence_chase(rng=FixedRng(6, 9, 2))  # units 6, tens 9 and 2
     chase.roll_random_hazard(1, bonus=-1)
-    assert chase.hazards[1].difficulty == "extreme"
+    assert chase.locations[1].hazard_after.difficulty == "extreme"
     chase.rng = FixedRng(9, 5, 0)  # bonus die keeps 09
     chase.roll_random_hazard(1, bonus=1)
-    assert chase.hazards[1].difficulty == "extreme"
+    assert chase.locations[1].hazard_after.difficulty == "extreme"
     assert chase.log[-1] == "R1: Random hazard after Location 2 (1 bonus) D100: 9 clear"
 
 
@@ -102,7 +110,9 @@ def test_track_edits_round_trip_and_undo():
     before = chase.to_json()
     chase.add_location(1, "Barn", "Smells of hay")
     chase.damage_barrier("Harvey", 3)
+    chase.remove_location(0)
     assert Chase.from_json(chase.to_json()) == chase
+    chase.undo()
     chase.undo()
     chase.undo()
     assert chase.to_json() == before
@@ -112,10 +122,10 @@ def test_nameless_location_is_named_by_its_number():
     chase = Chase()
     chase.add_location(0)
     chase.add_location(0, "")
-    assert chase.locations == ["Location 1", "Location 1"]
+    assert [loc.name for loc in chase.locations] == ["Location 1", "Location 1"]
     assert chase.log[-1] == "R0: Location 1 added"
     chase.add_location(2, "  ")
-    assert chase.locations[2] == "Location 3"
+    assert chase.locations[2].name == "Location 3"
     chase.remove_location(2)
     assert chase.log[-1] == "R0: Location 3 removed"
     chase.add_location(0, "Barn")

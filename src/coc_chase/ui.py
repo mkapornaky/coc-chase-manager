@@ -5,7 +5,8 @@ from pathlib import Path
 
 from nicegui import ui
 
-from coc_chase.chase import PEDAL_DISTANCES, Chase, Hazard, Participant, fallback_targets
+from coc_chase.chase import (PEDAL_DISTANCES, Caller, Chase, Difficulty, Hazard, HazardKind, Participant, Side,
+                              SpeedResult, fallback_targets)
 from coc_chase.files import import_party, list_files, load_prep, new_chase, save_prep
 
 # ponytail: one global chase per process; the Keeper is the only user
@@ -124,7 +125,7 @@ def root() -> None:
 
         with ui.expansion("Edit").props("dense"), ui.row().classes("items-end"):
             name = ui.input("Name", value=p.name)
-            side = ui.select(["pursuer", "fleeing"], value=p.side, label="Side")
+            side = ui.select(list(Side), value=p.side, label="Side")
             dex = ui.number("DEX", value=p.dex, precision=0)
             mov = ui.number("MOV", value=p.mov, precision=0)
             speed = ui.number("Speed roll value", value=p.speed_value, precision=0)
@@ -142,7 +143,7 @@ def root() -> None:
     def participant_form():
         """New-participant inputs. Returns a function giving the Participant, or None (refused) if incomplete."""
         name = ui.input("Name")
-        side = ui.select(["pursuer", "fleeing"], value="pursuer", label="Side")
+        side = ui.select(list(Side), value=Side.PURSUER, label="Side")
         dex = ui.number("DEX", value=50, precision=0)
         mov = ui.number("MOV", value=8, precision=0)
         speed = ui.number("Speed roll value", value=50, precision=0)
@@ -172,7 +173,7 @@ def root() -> None:
                 if p.is_passenger:
                     ui.label(f"passenger in {p.vehicle}, no speed roll")
                     continue
-                ui.toggle(["extreme", "success", "fail"], value=p.speed_result,
+                ui.toggle(list(SpeedResult), value=p.speed_result,
                           on_change=lambda e, n=p.name: act(chase.set_speed_result, n, e.value))
                 ui.button("Roll (NPC)", on_click=lambda n=p.name: act(chase.roll_speed, n))
         with ui.row().classes("items-end"):
@@ -200,29 +201,29 @@ def root() -> None:
         with ui.row().classes("no-wrap overflow-x-auto w-full"):
             for i, loc in enumerate(chase.locations):
                 with ui.card().classes("min-w-32"):
-                    ui.label(loc).classes("text-bold")
-                    if i in chase.descriptions:
-                        ui.label(chase.descriptions[i]).classes("text-caption")
+                    ui.label(loc.name).classes("text-bold")
+                    if loc.description:
+                        ui.label(loc.description).classes("text-caption")
                     if i in contact:
                         ui.badge("Same location", color="orange")
                     for p in chase.participants:
                         if p.location == i:
-                            color = "red" if p.side == "pursuer" else "blue"
+                            color = "red" if p.side == Side.PURSUER else "blue"
                             ui.chip(p.name + (f" debt {p.debt}" if p.debt else ""),
                                     color=color, text_color="white")
-                if i in chase.hazards:  # between card i and i+1
-                    h = chase.hazards[i]
-                    barrier = h.kind == "barrier"
+                h = loc.hazard_after  # between card i and i+1
+                if h:
+                    barrier = h.kind == HazardKind.BARRIER
                     label = f"{h.name} {h.hp}/{h.max_hp} HP" if barrier else h.name
                     ui.chip(label, color="brown" if barrier else "orange").classes(
                         "self-center").tooltip(f"{h.kind}: {h.skill} {h.difficulty} {h.notes}")
         with ui.row().classes("items-end"):
-            gap = ui.select({i: f"after {loc}" for i, loc in enumerate(chase.locations)},
+            gap = ui.select({i: f"after {loc.name}" for i, loc in enumerate(chase.locations)},
                             value=0 if chase.locations else None, label="Gap")
             h_name = ui.input("Hazard")
-            h_kind = ui.select(["hazard", "barrier"], value="hazard", label="Type")
+            h_kind = ui.select(list(HazardKind), value=HazardKind.HAZARD, label="Type")
             h_skill = ui.input("Skill(s)")
-            h_diff = ui.select(["regular", "hard", "extreme"], value="regular", label="Difficulty")
+            h_diff = ui.select(list(Difficulty), value=Difficulty.REGULAR, label="Difficulty")
             h_hp = ui.number("Barrier HP", precision=0, min=1)
             h_notes = ui.input("Notes")
 
@@ -231,13 +232,14 @@ def root() -> None:
                     return refuse("Add a location first")
                 if not h_name.value:
                     return refuse("Hazard needs a name")
-                hp = int(h_hp.value) if h_kind.value == "barrier" and h_hp.value else None
+                hp = int(h_hp.value) if h_kind.value == HazardKind.BARRIER and h_hp.value else None
                 act(chase.add_hazard, gap.value, Hazard(h_name.value, h_skill.value, h_diff.value,
                                                         h_notes.value, h_kind.value, hp, hp))
 
             ui.button("Set hazard", on_click=place)
             ui.button("Remove hazard", on_click=lambda: act(chase.remove_hazard, gap.value)
-                      if gap.value in chase.hazards else refuse("No hazard in that gap"))
+                      if gap.value is not None and chase.locations[gap.value].hazard_after
+                      else refuse("No hazard in that gap"))
             env = ui.select({0: "normal", 1: "quiet (bonus)", -1: "hazardous (penalty)"},
                             value=0, label="Environment")
             ui.button("Roll random hazard", on_click=lambda: act(
@@ -245,7 +247,7 @@ def root() -> None:
                 "Add a location first"))
         with ui.row().classes("items-end"):
             ends = len(chase.locations)
-            loc_i = ui.select({**dict(enumerate(chase.locations)), ends: "(end)"}, value=0, label="Location")
+            loc_i = ui.select({**{i: loc.name for i, loc in enumerate(chase.locations)}, ends: "(end)"}, value=0, label="Location")
             loc_name = ui.input("Name")
             loc_desc = ui.input("Description")
             def edit_location() -> None:
@@ -273,9 +275,9 @@ def root() -> None:
         if chase.ended:
             ui.label("Chase over").classes("text-negative text-h6")
         with ui.row().classes("items-center"):
-            caller = {None: "either side", "keeper": "Keeper", "players": "players"}[chase.sudden_caller]
+            caller = {None: "either side", Caller.KEEPER: "Keeper", Caller.PLAYERS: "players"}[chase.sudden_caller]
             ui.label(f"Next sudden hazard call: {caller}")
-            for side in ("keeper", "players"):
+            for side in Caller:
                 ui.button(f"{side.capitalize()} calls", on_click=lambda s=side: act(
                     chase.call_sudden_hazard, s)).props("dense")
         if chase.may_escape:
@@ -331,7 +333,7 @@ def root() -> None:
             ui.label(f"Too slow to join: {', '.join(chase.unable_to_join)}").classes("text-warning")
         with ui.row().classes("items-end"):
             new = participant_form()
-            result = ui.select({"npc": "NPC roll", "extreme": "extreme", "success": "success", "fail": "fail"},
+            result = ui.select({"npc": "NPC roll", **{r: str(r) for r in SpeedResult}},
                                value="npc", label="Speed result")
             location = ui.number("Location", value=1, precision=0, min=1)
             ui.button("Join", on_click=lambda: (p := new()) and not refuse_blank(location) and act(
@@ -370,7 +372,7 @@ def root() -> None:
             return
         ui.label(f"{h.kind.capitalize()} {h.name}: {h.skill} ({h.difficulty}) {h.notes}").classes(
             "text-orange")
-        if h.kind == "barrier":
+        if h.kind == HazardKind.BARRIER:
             smash = ui.number("Damage to barrier", value=0, precision=0, min=0)
             ui.button("Smash", on_click=lambda: act(chase.damage_barrier, p.name, int(smash.value or 0)))
             if p.is_vehicle:

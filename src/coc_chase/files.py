@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from coc_chase.chase import FORMAT_VERSION, Chase, Hazard, Participant, mutation
+from coc_chase.chase import FORMAT_VERSION, Chase, Location, Participant, locations_from_v1, mutation
 
 # Live state that never goes into a prep file.
 LIVE = ("speed_result", "location", "actions_left", "debt", "pedal", "pedal_penalty", "navigated",
@@ -22,9 +22,7 @@ def save_prep(chase: Chase, path: Path) -> None:
     """Save as: locations, hazards and NPCs only, never positions, round or log."""
     data = {
         "version": FORMAT_VERSION,
-        "locations": [{"name": n, "description": chase.descriptions.get(i, "")}
-                      for i, n in enumerate(chase.locations)],
-        "hazards": {str(i): asdict(h) for i, h in chase.hazards.items()},
+        "locations": [asdict(loc) for loc in chase.locations],
         "npcs": [_prep_participant(p) for p in chase.participants if p.name not in chase.investigators],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -35,7 +33,7 @@ def _read(path: Path, build):
     """Parse a file with build(data). Any problem with it becomes one ValueError naming the file."""
     try:
         data = json.loads(path.read_text())
-        if data.get("version") != FORMAT_VERSION:
+        if data.get("version") not in (1, FORMAT_VERSION):
             raise ValueError(f"unsupported version {data.get('version')!r}")
         return build(data)
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
@@ -51,11 +49,12 @@ def _participants(items: list) -> list[Participant]:
 
 
 def _prep_chase(data: dict) -> Chase:
-    locations = data["locations"]
+    if data["version"] == 1:
+        locations = locations_from_v1(data["locations"], data.get("hazards", {}))
+    else:
+        locations = [Location.from_dict(loc) for loc in data["locations"]]
     return Chase(
-        locations=[str(loc["name"]) for loc in locations],
-        descriptions={i: loc["description"] for i, loc in enumerate(locations) if loc.get("description")},
-        hazards={int(i): Hazard(**h) for i, h in data.get("hazards", {}).items()},
+        locations=locations,
         participants=_participants(data.get("npcs", [])),
     )
 
