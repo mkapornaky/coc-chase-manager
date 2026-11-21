@@ -44,6 +44,14 @@ The app reads and writes files in the directory you start it from:
 | `chases/*.json` | Prepped chases: locations, hazards and NPCs. Make one by building a chase and clicking **Save**. |
 | `parties/*.json` | Party rosters. Use **Import party** to add the investigators to any chase. |
 
+All three are git-ignored, so your own prep and rosters stay out of the repo. For a quick start, copy the samples from `examples/`:
+
+```sh
+mkdir -p chases parties
+cp examples/chases/*.json chases/
+cp examples/parties/*.json parties/
+```
+
 Prepped chases never store positions, rounds or the log, so you can reuse one as often as you like.
 
 You write party rosters by hand. Only `name`, `side`, `dex`, `mov` and `speed_value` are required:
