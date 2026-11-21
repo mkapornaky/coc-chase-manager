@@ -26,3 +26,29 @@ _Avoid_: Enemy, mob
 
 **DEX tie**:
 Two or more participants with the same DEX, whose turn order still has to be settled by an opposed DEX roll or by the Keeper.
+
+**Location**:
+A place the chase passes through. Moving from one location to a connected one costs one movement action.
+_Avoid_: Stop, node, space
+
+**Connection**:
+The way from one location forward to another. It holds at most one obstacle. A location with more than one outgoing connection is a fork, and one with more than one incoming connection is where routes rejoin.
+_Avoid_: Gap, edge, link
+
+**Obstacle**:
+Anything on a connection that stands in a participant's way: a hazard or a barrier.
+
+**Hazard**:
+An obstacle you get past by attempting a skill roll. Failing costs you actions or damage, but you still get through.
+_Avoid_: Using "hazard" to mean any obstacle
+
+**Barrier**:
+An obstacle that blocks you until you pass it or smash through. It has hit points.
+_Avoid_: Using "hazard" to mean any obstacle
+
+**Layout**:
+The shape of a chase: its locations and the connections between them. Usually a straight line, sometimes forking into routes that rejoin or end separately. Never loops back.
+_Avoid_: Track (when you mean the structure), map
+
+**Branch**:
+A route leaving a fork. Participants on different branches are still in the same chase, with one shared round and turn order.
