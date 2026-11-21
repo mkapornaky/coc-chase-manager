@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass, field, fields, replace
 from enum import StrEnum
 from pathlib import Path
 
-FORMAT_VERSION = 2  # 1: locations, descriptions and hazards kept apart; still read
+FORMAT_VERSION = 3
+READABLE_VERSIONS = (1, 2, FORMAT_VERSION)  # 1: hazards kept apart; 2: Chase.investigators list
 
 
 
@@ -29,6 +30,7 @@ def mutation(fn):
             result = fn(self, *args, **kwargs)
         finally:
             self._in_mutation = False
+        self._forget_stale_ties()
         self.history.append((snapshot, self.last_entries))
         self.save()
         return result
@@ -156,6 +158,7 @@ class Participant:
     vehicle: str | None = None  # passenger in this vehicle: no speed roll, rides along, 1 action
     passenger_action: bool = False  # passengers only: this round's one action is still unused
     notes: str = ""  # Keeper's free text: skills, conditions
+    investigator: bool = False  # a player's character: never saved as an NPC, players roll their own dice
 
     def __post_init__(self):  # values loaded from JSON arrive as plain strings
         self.side = Side(self.side)
@@ -181,13 +184,14 @@ class Chase:
     escaped: list[str] = field(default_factory=list)
     may_escape: list[str] = field(default_factory=list)
     unable_to_join: list[str] = field(default_factory=list)  # pursuers too slow to join mid-chase
+    left_behind: list[Participant] = field(default_factory=list)  # dropped at establish; still saved as prep
     order: list[str] = field(default_factory=list)  # Keeper turn order; empty = by DEX
     round: int = 0  # 0 = not established yet
     slowest_mov: int = 0
     delayed: list[str] = field(default_factory=list)  # this round only, acting after everyone else
     sudden_caller: Caller | None = None  # None = either side may call the next sudden hazard
     ended: bool = False
-    investigators: list[str] = field(default_factory=list)  # names imported from a party; not saved as NPCs
+    resolved_ties: list[list[str]] = field(default_factory=list)  # DEX ties settled, by exact membership
     log:list[str] = field(default_factory=list)
     # Not state (compare=False): excluded from JSON, equality and undo snapshots.
     history: list[tuple[str, list[str]]] = field(default_factory=list, repr=False, compare=False)
@@ -208,15 +212,19 @@ class Chase:
     def from_json(cls, text: str) -> "Chase":
         data = json.loads(text)
         version = data.pop("version", None)
+        if version not in READABLE_VERSIONS:
+            raise ValueError("unsupported chase file version")
         if version == 1:
             descriptions = data.pop("descriptions", {})
             names = [{"name": n, "description": descriptions.get(str(i), "")} for i, n in enumerate(data["locations"])]
             data["locations"] = locations_from_v1(names, data.pop("hazards", {}))
-        elif version == FORMAT_VERSION:
-            data["locations"] = [Location.from_dict(loc) for loc in data["locations"]]
         else:
-            raise ValueError("unsupported chase file version")
+            data["locations"] = [Location.from_dict(loc) for loc in data["locations"]]
+        investigators = data.pop("investigators", [])  # versions 1-2
         data["participants"] = [Participant(**p) for p in data["participants"]]
+        for p in data["participants"]:
+            p.investigator = p.investigator or p.name in investigators
+        data["left_behind"] = [Participant(**p) for p in data.get("left_behind", [])]
         return cls(**data)
 
     @classmethod
@@ -310,7 +318,7 @@ class Chase:
 
         One-on-one (passengers aside) with the fleeing character faster: they escape, no chase is played.
         Otherwise faster fleeing characters are flagged in `may_escape`, and pursuers slower than the
-        slowest fleeing character are left behind (removed). The slowest pursuer starts on
+        slowest fleeing character are left behind (moved to `left_behind`). The slowest pursuer starts on
         `start_location`, the slowest fleeing character `start_range` ahead of the foremost pursuer.
         """
         pursuers = [p for p in self.participants if p.side == Side.PURSUER and not p.is_passenger]
@@ -328,6 +336,7 @@ class Chase:
         for p in pursuers:
             if p.adjusted_mov < slowest_fleeing:
                 self.participants.remove(p)
+                self.left_behind.append(p)
                 self.log_event(f"{p.name} is left behind")
         pursuers = [p for p in self.participants if p.side == Side.PURSUER and not p.is_passenger]
         slowest_pursuer = min((p.adjusted_mov for p in pursuers), default=fastest_pursuer)
@@ -424,7 +433,7 @@ class Chase:
             p.max_build = p.build
         new = changes.get("name")
         if new:
-            for names in (self.order, self.delayed, self.investigators, self.may_escape):
+            for names in (self.order, self.delayed, self.may_escape, *self.resolved_ties):
                 names[:] = [new if n == name else n for n in names]
             for o in self.participants:
                 if o.vehicle == name:
@@ -471,34 +480,70 @@ class Chase:
     def dex_order(self) -> list[Participant]:
         """Highest DEX first, unless the Keeper or an opposed DEX roll set `order`.
 
-        Names missing from `order` (e.g. later joiners) go after it, by DEX.
+        Anyone missing from `order` (e.g. later joiners) goes right after the last participant with
+        the same DEX, else after the last with a higher DEX, else first; the ordered keep their relative order.
         """
-        rank = {name: i for i, name in enumerate(self.order)}
-        return sorted(self.participants, key=lambda p: (rank.get(p.name, len(rank)), -p.dex))
+        by_dex = sorted(self.participants, key=lambda p: -p.dex)
+        if not self.order:
+            return by_dex
+        result = [p for name in self.order for p in self.participants if p.name == name]
+        for p in by_dex:
+            if p.name not in self.order:
+                after = ([i for i, o in enumerate(result) if o.dex == p.dex]
+                         or [i for i, o in enumerate(result) if o.dex > p.dex])
+                result.insert(after[-1] + 1 if after else 0, p)
+        return result
 
     def dex_ties(self) -> list[list[str]]:
-        """Groups of names sharing a DEX, until an order is set (by reorder or roll_dex_ties)."""
-        if self.order:
-            return []
+        """Unresolved groups of names sharing a DEX, in turn order.
+
+        A tie is its exact set of members: once anyone joins or leaves it, it is a new, unresolved tie.
+        """
         groups: dict[int, list[str]] = {}
         for p in self.dex_order():
             groups.setdefault(p.dex, []).append(p.name)
-        return [g for g in groups.values() if len(g) > 1]
+        resolved = [set(t) for t in self.resolved_ties]
+        return [g for g in groups.values() if len(g) > 1 and set(g) not in resolved]
+
+    def _forget_stale_ties(self) -> None:
+        """Drop resolved ties whose exact membership no longer shares a DEX (a join, DEX edit or removal)."""
+        groups: dict[int, set[str]] = {}
+        for p in self.participants:
+            groups.setdefault(p.dex, set()).add(p.name)
+        self.resolved_ties = [t for t in self.resolved_ties if set(t) in groups.values()]
 
     @mutation
     def reorder(self, names: list[str]) -> None:
-        """Keeper sets the turn order (resolves DEX ties, or overrides DEX outright)."""
+        """Keeper sets the turn order (or overrides DEX outright).
+
+        Resolves each DEX tie whose members' relative order this changes.
+        """
+        before = [p.name for p in self.dex_order()]
+        for tie in self.dex_ties():
+            if [n for n in before if n in tie] != [n for n in names if n in tie]:
+                self.resolved_ties.append(tie)
         self.order = list(names)
         self.log_event(f"Order set: {', '.join(names)}")
 
     @mutation
+    def keep_dex_order(self, tie: list[str]) -> None:
+        """Keeper confirms a DEX tie's current order."""
+        self.resolved_ties.append(list(tie))
+        self.log_event(f"DEX tie kept in order: {', '.join(tie)}")
+
+    @mutation
     def roll_dex_ties(self) -> None:
-        """Opposed DEX roll within each tied group: better result level first, then lower roll.
+        """Opposed DEX roll within each unresolved tie of NPCs only (players roll for investigators):
+        better result level first, then lower roll.
 
         Identical results are rerolled; the reroll only orders those tied with each other.
         """
         order = [p.name for p in self.dex_order()]
-        for group in self.dex_ties():
+        groups = [g for g in self.dex_ties() if not any(self.get(n).investigator for n in g)]
+        if not groups:
+            self.log_event("No NPC DEX ties to roll")
+            return
+        for group in groups:
             results = {name: [] for name in group}
             pending = group
             while pending:
@@ -507,8 +552,10 @@ class Chase:
                     results[name].append((LEVELS.index(level), roll))
                 rolled = list(results.values())
                 pending = [n for n in group if rolled.count(results[n]) > 1]
-            start = order.index(group[0])
-            order[start:start + len(group)] = sorted(group, key=results.get)
+            slots = sorted(order.index(n) for n in group)  # tied members need not sit together
+            for i, name in zip(slots, sorted(group, key=results.get)):
+                order[i] = name
+            self.resolved_ties.append(group)
         self.reorder(order)
 
     def turn_order(self) -> list[Participant]:

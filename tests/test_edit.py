@@ -17,7 +17,7 @@ def test_edit_participant_fields_is_logged_and_undoable():
 
 def test_renaming_updates_every_reference():
     chase = passenger_chase()
-    chase.investigators = ["Harvey"]
+    chase.get("Harvey").investigator = True
     chase.reorder(["Police 1", "Harvey", "Hilda"])
     chase.delay("Harvey")
     chase.edit_participant("Harvey", name="Harv")
@@ -25,7 +25,7 @@ def test_renaming_updates_every_reference():
     assert chase.order == ["Police 1", "Harv", "Hilda"]
     assert chase.delayed == ["Harv"]
     assert chase.get("Hilda").vehicle == "Harv"
-    assert chase.investigators == ["Harv"]
+    assert chase.get("Harv").investigator
 
 
 def test_giving_a_build_makes_it_the_starting_build():

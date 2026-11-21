@@ -50,7 +50,7 @@ You write party rosters by hand. Only `name`, `side`, `dex`, `mov` and `speed_va
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "investigators": [
     {"name": "Harvey Walters", "side": "fleeing", "dex": 55, "mov": 7, "speed_value": 60, "hp": 11, "max_hp": 11},
     {"name": "Bessie Cooper", "side": "fleeing", "dex": 70, "mov": 8, "speed_value": 75, "notes": "Drive Auto 60"}
@@ -58,7 +58,7 @@ You write party rosters by hand. Only `name`, `side`, `dex`, `mov` and `speed_va
 }
 ```
 
-Older version 1 files (rosters, prepped chases and the autosave) still load, and are written back as version 2.
+Older version 1 and 2 files (rosters, prepped chases and the autosave) still load, and are written back as version 3.
 
 `speed_value` is the skill or characteristic used for the speed roll (usually CON, or Drive Auto for a vehicle). Optional fields: `hp`, `max_hp`, `build` and `max_build` (setting these makes the participant a vehicle), `vehicle` (the name of the vehicle a passenger rides in) and `notes`.
 
