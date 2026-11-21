@@ -137,3 +137,55 @@ def test_identical_opposed_dex_results_are_rerolled_between_the_tied_only():
     chase.rng = FixedRng(0, 3, 0, 3, 5, 0, 0, 8, 0, 1)
     chase.roll_dex_ties()
     assert names(chase.dex_order())[3:] == ["Cultist C", "Cultist B", "Cultist A"]
+
+
+def tied_chase(*people):
+    """(name, dex) pairs; names starting with "Inv" are investigators."""
+    chase = Chase()
+    for name, dex in people:
+        chase.add(Participant(name, "pursuer", dex=dex, mov=8, speed_value=50, investigator=name.startswith("Inv")))
+    return chase
+
+
+def test_opposed_dex_roll_skips_ties_with_an_investigator():
+    chase = tied_chase(("Inv Harvey", 50), ("Cultist", 50))
+    chase.roll_dex_ties()
+    assert not any("opposed DEX" in e for e in chase.log)
+    assert chase.dex_ties() == [["Inv Harvey", "Cultist"]]
+
+
+def test_reorder_resolves_only_the_ties_whose_relative_order_changed():
+    chase = tied_chase(("A", 50), ("B", 50), ("C", 40), ("D", 40))
+    chase.reorder(["A", "B", "D", "C"])
+    assert chase.dex_ties() == [["A", "B"]]
+
+
+def test_reorder_keeping_a_tie_in_place_leaves_it_flagged_until_kept():
+    chase = tied_chase(("A", 50), ("B", 50), ("C", 60))
+    chase.reorder(["A", "B", "C"])  # C moved, A still before B
+    assert chase.dex_ties() == [["A", "B"]]
+    chase.keep_dex_order(["A", "B"])
+    assert chase.dex_ties() == []
+    assert chase.log[-1] == "R0: DEX tie kept in order: A, B"
+    chase.undo()
+    assert chase.dex_ties() == [["A", "B"]]
+
+
+def test_joining_a_resolved_tie_makes_a_new_tie():
+    chase = tied_chase(("A", 50), ("B", 50))
+    chase.keep_dex_order(["A", "B"])
+    chase.add(Participant("C", "pursuer", dex=50, mov=8, speed_value=50))
+    assert chase.dex_ties() == [["A", "B", "C"]]
+
+
+def test_tie_state_round_trips():
+    chase = tied_chase(("A", 50), ("B", 50), ("C", 40), ("D", 40))
+    chase.keep_dex_order(["C", "D"])
+    assert chase == Chase.from_json(chase.to_json())
+
+
+def test_renaming_keeps_a_resolved_tie_resolved():
+    chase = tied_chase(("A", 50), ("B", 50))
+    chase.keep_dex_order(["A", "B"])
+    chase.edit_participant("A", name="Alf")
+    assert chase.dex_ties() == []

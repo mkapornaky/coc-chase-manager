@@ -134,10 +134,12 @@ def root() -> None:
             vehicle = ui.select([o.name for o in chase.participants if o.is_vehicle and o is not p],
                                 value=p.vehicle, label="Passenger in", clearable=True)
             notes = ui.input("Notes", value=p.notes)
+            investigator = ui.checkbox("Investigator", value=p.investigator)
             ui.button("Save", on_click=lambda: refuse_blank(dex, mov, speed) or act(
                 chase.edit_participant, p.name, name=name.value, side=side.value, dex=int(dex.value),
                 mov=int(mov.value), speed_value=int(speed.value), hp=whole(hp.value),
                 build=whole(build.value), vehicle=vehicle.value, notes=notes.value or "",
+                investigator=investigator.value,
             ) if name.value else refuse("Name can't be empty"))
 
     def participant_form():
@@ -151,6 +153,7 @@ def root() -> None:
         build = ui.number("Build (vehicle)", precision=0, min=1)
         vehicle = ui.select([p.name for p in chase.participants if p.is_vehicle],
                             label="Passenger in", clearable=True)
+        investigator = ui.checkbox("Investigator")
 
         def make() -> Participant | None:
             if not name.value:
@@ -161,7 +164,7 @@ def root() -> None:
             max_build = int(build.value) if build.value is not None else None
             return Participant(name.value, side.value, int(dex.value), int(mov.value), int(speed.value),
                                hp=max_hp, max_hp=max_hp, build=max_build, max_build=max_build,
-                               vehicle=vehicle.value)
+                               vehicle=vehicle.value, investigator=investigator.value)
         return make
 
     def setup() -> None:
@@ -285,7 +288,9 @@ def root() -> None:
         for group in chase.dex_ties():
             with ui.row().classes("items-center"):
                 ui.label(f"DEX tie: {', '.join(group)}").classes("text-warning")
-                ui.button("Opposed DEX roll", on_click=lambda: act(chase.roll_dex_ties))
+                if not any(chase.get(n).investigator for n in group):
+                    ui.button("Opposed DEX roll", on_click=lambda: act(chase.roll_dex_ties))
+                ui.button("Keep this order", on_click=lambda g=group: act(chase.keep_dex_order, g))
         track()
         ui.label("DEX order").classes("text-h6")
         order = [p.name for p in chase.dex_order()]

@@ -6,9 +6,9 @@ from pathlib import Path
 
 from coc_chase.chase import FORMAT_VERSION, Chase, Location, Participant, locations_from_v1, mutation
 
-# Live state that never goes into a prep file.
+# Live state that never goes into a prep file (nor `investigator`: prep files hold NPCs only).
 LIVE = ("speed_result", "location", "actions_left", "debt", "pedal", "pedal_penalty", "navigated",
-        "passenger_action")
+        "passenger_action", "investigator")
 
 
 def _prep_participant(p: Participant) -> dict:
@@ -24,7 +24,7 @@ def save_prep(chase: Chase, path: Path) -> None:
         "version": FORMAT_VERSION,
         "locations": [asdict(loc) for loc in chase.locations],
         "npcs": [_prep_participant(p) for p in chase.participants + chase.left_behind
-                 if p.name not in chase.investigators],
+                 if not p.investigator],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
@@ -34,7 +34,7 @@ def _read(path: Path, build):
     """Parse a file with build(data). Any problem with it becomes one ValueError naming the file."""
     try:
         data = json.loads(path.read_text())
-        if data.get("version") not in (1, FORMAT_VERSION):
+        if data.get("version") not in (1, 2, FORMAT_VERSION):
             raise ValueError(f"unsupported version {data.get('version')!r}")
         return build(data)
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
@@ -86,5 +86,5 @@ def load_prep(chase: Chase, path: Path) -> None:
 def import_party(chase: Chase, path: Path) -> None:
     """Add a party roster's investigators to the current chase (undoable)."""
     for p in _read(path, lambda data: _participants(data["investigators"])):
+        p.investigator = True
         chase.add(p)
-        chase.investigators.append(p.name)

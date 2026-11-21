@@ -94,10 +94,10 @@ def test_minimal_hand_written_version_2_chase_file_loads(tmp_path):
     assert chase.locations == [Location("Road", hazard_after=Hazard("Mud")), Location("Bridge", "Rickety")]
 
 
-def test_saved_chase_file_is_version_2_with_hazards_on_their_locations(tmp_path):
+def test_saved_chase_file_is_version_3_with_hazards_on_their_locations(tmp_path):
     save_prep(prepped_chase(), tmp_path / "docks.json")
     data = json.loads((tmp_path / "docks.json").read_text())
-    assert data["version"] == 2
+    assert data["version"] == 3
     assert "hazards" not in data
     assert data["locations"][1]["description"] == "Dark and wet."
     assert data["locations"][1]["hazard_after"]["name"] == "Gate"
@@ -106,7 +106,7 @@ def test_saved_chase_file_is_version_2_with_hazards_on_their_locations(tmp_path)
 def test_version_2_party_imports(tmp_path):
     chase = Chase()
     import_party(chase, write(tmp_path / "party.json", PARTY | {"version": 2}))
-    assert chase.investigators == ["Harvey"]
+    assert chase.get("Harvey").investigator
 
 
 V1_AUTOSAVE = {
@@ -130,7 +130,7 @@ def test_version_1_autosave_resumes_with_descriptions_and_hazards_on_their_locat
     ]
     assert chase.hazard_ahead("Harvey").name == "Gate"
     assert (chase.round, chase.sudden_caller, chase.log) == (1, "keeper", V1_AUTOSAVE["log"])
-    assert json.loads(chase.to_json())["version"] == 2
+    assert json.loads(chase.to_json())["version"] == 3
 
 
 BAD_SIDE = {"name": "Cultist", "side": "persuer", "dex": 50, "mov": 8, "speed_value": 50}
@@ -188,7 +188,7 @@ def left_behind_chase() -> Chase:
 
 def test_save_as_after_establish_keeps_pursuers_left_behind(tmp_path):
     chase = left_behind_chase()
-    chase.investigators = ["Harvey"]
+    chase.get("Harvey").investigator = True
     save_prep(chase, tmp_path / "prep.json")
     npcs = json.loads((tmp_path / "prep.json").read_text())["npcs"]
     assert sorted(n["name"] for n in npcs) == ["Ghoul", "Hound"]
@@ -219,3 +219,22 @@ def test_autosave_without_left_behind_loads():
     data = json.loads(Chase().to_json())
     del data["left_behind"]
     assert Chase.from_json(json.dumps(data)).left_behind == []
+
+
+def test_hand_added_investigators_are_not_saved_as_npcs(tmp_path):
+    chase = prepped_chase()
+    chase.add(Participant("Harvey", "fleeing", dex=60, mov=7, speed_value=55, investigator=True))
+    save_prep(chase, tmp_path / "prep.json")
+    [npc] = json.loads((tmp_path / "prep.json").read_text())["npcs"]
+    assert npc["name"] == "Cultist" and "investigator" not in npc
+
+
+def test_version_2_autosave_marks_listed_investigators():
+    data = json.loads(Chase().to_json()) | {"version": 2, "investigators": ["Harvey"], "participants": [
+        {"name": "Harvey", "side": "fleeing", "dex": 60, "mov": 7, "speed_value": 55},
+        {"name": "Cultist", "side": "pursuer", "dex": 50, "mov": 8, "speed_value": 50}]}
+    for key in ("left_behind", "resolved_ties"):
+        data.pop(key, None)
+    chase = Chase.from_json(json.dumps(data))
+    assert [p.investigator for p in chase.participants] == [True, False]
+    assert chase == Chase.from_json(chase.to_json())

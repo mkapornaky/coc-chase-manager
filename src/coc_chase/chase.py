@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field, fields, replace
 from enum import StrEnum
 from pathlib import Path
 
-FORMAT_VERSION = 2  # 1: locations, descriptions and hazards kept apart; still read
+FORMAT_VERSION = 3  # 1: locations, descriptions and hazards kept apart; 2: Chase.investigators list. Both still read
 
 
 
@@ -156,6 +156,7 @@ class Participant:
     vehicle: str | None = None  # passenger in this vehicle: no speed roll, rides along, 1 action
     passenger_action: bool = False  # passengers only: this round's one action is still unused
     notes: str = ""  # Keeper's free text: skills, conditions
+    investigator: bool = False  # player character: never saved as an NPC, players roll their own dice
 
     def __post_init__(self):  # values loaded from JSON arrive as plain strings
         self.side = Side(self.side)
@@ -188,7 +189,7 @@ class Chase:
     delayed: list[str] = field(default_factory=list)  # this round only, acting after everyone else
     sudden_caller: Caller | None = None  # None = either side may call the next sudden hazard
     ended: bool = False
-    investigators: list[str] = field(default_factory=list)  # names imported from a party; not saved as NPCs
+    resolved_ties: list[list[str]] = field(default_factory=list)  # DEX ties settled, by exact membership
     log:list[str] = field(default_factory=list)
     # Not state (compare=False): excluded from JSON, equality and undo snapshots.
     history: list[tuple[str, list[str]]] = field(default_factory=list, repr=False, compare=False)
@@ -209,15 +210,18 @@ class Chase:
     def from_json(cls, text: str) -> "Chase":
         data = json.loads(text)
         version = data.pop("version", None)
+        if version not in (1, 2, FORMAT_VERSION):
+            raise ValueError("unsupported chase file version")
         if version == 1:
             descriptions = data.pop("descriptions", {})
             names = [{"name": n, "description": descriptions.get(str(i), "")} for i, n in enumerate(data["locations"])]
             data["locations"] = locations_from_v1(names, data.pop("hazards", {}))
-        elif version == FORMAT_VERSION:
-            data["locations"] = [Location.from_dict(loc) for loc in data["locations"]]
         else:
-            raise ValueError("unsupported chase file version")
+            data["locations"] = [Location.from_dict(loc) for loc in data["locations"]]
+        investigators = data.pop("investigators", [])  # versions 1-2
         data["participants"] = [Participant(**p) for p in data["participants"]]
+        for p in data["participants"]:
+            p.investigator = p.investigator or p.name in investigators
         data["left_behind"] = [Participant(**p) for p in data.get("left_behind", [])]
         return cls(**data)
 
@@ -427,7 +431,7 @@ class Chase:
             p.max_build = p.build
         new = changes.get("name")
         if new:
-            for names in (self.order, self.delayed, self.investigators, self.may_escape):
+            for names in (self.order, self.delayed, self.may_escape, *self.resolved_ties):
                 names[:] = [new if n == name else n for n in names]
             for o in self.participants:
                 if o.vehicle == name:
@@ -480,28 +484,47 @@ class Chase:
         return sorted(self.participants, key=lambda p: (rank.get(p.name, len(rank)), -p.dex))
 
     def dex_ties(self) -> list[list[str]]:
-        """Groups of names sharing a DEX, until an order is set (by reorder or roll_dex_ties)."""
-        if self.order:
-            return []
+        """Unresolved groups of names sharing a DEX, in turn order.
+
+        A tie is its exact set of members: once anyone joins or leaves it, it is a new, unresolved tie.
+        """
         groups: dict[int, list[str]] = {}
         for p in self.dex_order():
             groups.setdefault(p.dex, []).append(p.name)
-        return [g for g in groups.values() if len(g) > 1]
+        resolved = [set(t) for t in self.resolved_ties]
+        return [g for g in groups.values() if len(g) > 1 and set(g) not in resolved]
 
     @mutation
     def reorder(self, names: list[str]) -> None:
-        """Keeper sets the turn order (resolves DEX ties, or overrides DEX outright)."""
+        """Keeper sets the turn order (or overrides DEX outright).
+
+        Resolves each DEX tie whose members' relative order this changes.
+        """
+        before = [p.name for p in self.dex_order()]
+        for tie in self.dex_ties():
+            if [n for n in before if n in tie] != [n for n in names if n in tie]:
+                self.resolved_ties.append(tie)
         self.order = list(names)
         self.log_event(f"Order set: {', '.join(names)}")
 
     @mutation
+    def keep_dex_order(self, tie: list[str]) -> None:
+        """Keeper confirms a DEX tie's current order."""
+        self.resolved_ties.append(list(tie))
+        self.log_event(f"DEX tie kept in order: {', '.join(tie)}")
+
+    @mutation
     def roll_dex_ties(self) -> None:
-        """Opposed DEX roll within each tied group: better result level first, then lower roll.
+        """Opposed DEX roll within each unresolved tie of NPCs only (players roll for investigators):
+        better result level first, then lower roll.
 
         Identical results are rerolled; the reroll only orders those tied with each other.
         """
         order = [p.name for p in self.dex_order()]
-        for group in self.dex_ties():
+        groups = [g for g in self.dex_ties() if not any(self.get(n).investigator for n in g)]
+        if not groups:
+            return
+        for group in groups:
             results = {name: [] for name in group}
             pending = group
             while pending:
@@ -510,8 +533,10 @@ class Chase:
                     results[name].append((LEVELS.index(level), roll))
                 rolled = list(results.values())
                 pending = [n for n in group if rolled.count(results[n]) > 1]
-            start = order.index(group[0])
-            order[start:start + len(group)] = sorted(group, key=results.get)
+            slots = sorted(order.index(n) for n in group)  # tied members need not sit together
+            for i, name in zip(slots, sorted(group, key=results.get)):
+                order[i] = name
+            self.resolved_ties.append(group)
         self.reorder(order)
 
     def turn_order(self) -> list[Participant]:
