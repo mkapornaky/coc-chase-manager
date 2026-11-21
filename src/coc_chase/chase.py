@@ -478,10 +478,18 @@ class Chase:
     def dex_order(self) -> list[Participant]:
         """Highest DEX first, unless the Keeper or an opposed DEX roll set `order`.
 
-        Names missing from `order` (e.g. later joiners) go after it, by DEX.
+        Anyone missing from `order` (e.g. later joiners) goes right after the last participant with
+        the same or a higher DEX (first if there is none); the ordered keep their relative order.
         """
-        rank = {name: i for i, name in enumerate(self.order)}
-        return sorted(self.participants, key=lambda p: (rank.get(p.name, len(rank)), -p.dex))
+        by_dex = sorted(self.participants, key=lambda p: -p.dex)
+        if not self.order:
+            return by_dex
+        result = [p for name in self.order for p in self.participants if p.name == name]
+        for p in by_dex:
+            if p.name not in self.order:
+                after = [i for i, o in enumerate(result) if o.dex >= p.dex]
+                result.insert(after[-1] + 1 if after else 0, p)
+        return result
 
     def dex_ties(self) -> list[list[str]]:
         """Unresolved groups of names sharing a DEX, in turn order.
