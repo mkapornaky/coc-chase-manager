@@ -98,3 +98,21 @@ def test_nobody_has_had_a_turn_in_setup_or_after_the_chase_ends():
 
 def chase_had_any_turn(chase):
     return any(chase.had_turn(p.name) for p in chase.participants)
+
+
+def test_badges_show_same_location_delayed_and_may_escape():
+    chase = mud_chase()
+    assert chase.badges("Harvey") == []
+    chase.set_location("Farmer", chase.get("Harvey").location)
+    chase.delay("Harvey")
+    assert chase.badges("Harvey") == ["same location", "delayed"]
+    assert chase.badges("Farmer") == ["same location"]
+    from test_setup import apartment_chase
+    assert "may escape" in apartment_chase().badges("Scott")
+
+
+def test_same_location_badge_hidden_in_setup():
+    setup = Chase()
+    setup.add(Participant("Harvey", "fleeing", dex=55, mov=6, speed_value=60))
+    setup.add(Participant("Farmer", "pursuer", dex=50, mov=7, speed_value=50))
+    assert setup.badges("Harvey") == []

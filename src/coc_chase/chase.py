@@ -448,7 +448,16 @@ class Chase:
 
     def badges(self, name: str) -> list[str]:
         p = self.get(name)
-        badges = [f"passenger in {p.vehicle}"] if p.is_passenger else []
+        badges = []
+        if p.is_passenger:
+            action = f", action {'ready' if p.passenger_action else 'used'}" if self.round else ""
+            badges.append(f"passenger in {p.vehicle}{action}")
+        if self.round and p.location in self.same_location():
+            badges.append("same location")
+        if p.name in self.delayed:
+            badges.append("delayed")
+        if p.name in self.may_escape:
+            badges.append("may escape")
         if p.is_vehicle:
             if p.build <= 0:
                 badges.append("undriveable")

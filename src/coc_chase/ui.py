@@ -25,6 +25,8 @@ html, body { font-size: 18px; }
 # White text on these meets WCAG AA (>= 4.5:1).
 SIDE_COLOR = {Side.PURSUER: "red-9", Side.FLEEING: "blue-9"}
 BADGE = {"color": "amber-3", "text_color": "black"}
+PRIMARY = "#1565c0"  # darker than Quasar's default: white text meets AA
+NOW_BORDER = f"border: 4px solid {PRIMARY}"
 
 
 def notify(lines: list[str]) -> None:
@@ -51,13 +53,23 @@ def whole(value) -> int | None:
     return None if value is None else int(value)
 
 
+def labelled(enum) -> dict:
+    """Select/toggle options for an enum, written out: {member: "Member"}."""
+    return {x: x.capitalize() for x in enum}
+
+
+def location_options() -> dict[int, str]:
+    """Locations by index, numbered from 1 as the Keeper sees them."""
+    return {i: f"{i + 1}. {loc.name}" for i, loc in enumerate(chase.locations)}
+
+
 def section(title: str) -> None:
     ui.label(title).classes("text-subtitle1 text-bold")
 
 
 def root() -> None:
     ui.add_css(CSS)
-    ui.colors(primary="#1565c0", positive="#2e7d32")  # darker defaults: white text meets AA
+    ui.colors(primary=PRIMARY, positive="#2e7d32")
     holder = ui.element()  # dialogs live here, outside anything a refresh clears
 
     def refresh() -> None:
@@ -126,25 +138,22 @@ def root() -> None:
         ui.space()
         ui.button("Undo", icon="undo", on_click=undo).props("flat color=white")
         with ui.button("File", icon="menu").props("flat color=white"), ui.menu():
-            ui.menu_item("Load prepped chase…", load_dialog)
-            ui.menu_item("Import party…", party_dialog)
+            ui.menu_item("Load prepped chase…", lambda: file_dialog(
+                "Load prepped chase", CHASES, "Prepped chase", "Load", load_prep))
+            ui.menu_item("Import party…", lambda: file_dialog(
+                "Import party", PARTIES, "Party", "Import", import_party))
             ui.menu_item("New blank chase", lambda: act(new_chase, chase))
             ui.menu_item("Save as…", save_dialog)
             ui.separator()
             ui.menu_item("End chase…", lambda: confirm("End the chase?", chase.end_chase)).set_enabled(
                 running and not chase.ended)
 
-    def load_dialog() -> None:
-        with dialog("Load prepped chase") as d:
-            prepped = ui.select(list_files(CHASES), label="Prepped chase")
-            ui.button("Load", on_click=lambda: submit(d, load_prep, chase, CHASES / f"{prepped.value}.json")
-                      if prepped.value else refuse("Pick a prepped chase first"))
-
-    def party_dialog() -> None:
-        with dialog("Import party") as d:
-            party = ui.select(list_files(PARTIES), label="Party")
-            ui.button("Import", on_click=lambda: submit(d, import_party, chase, PARTIES / f"{party.value}.json")
-                      if party.value else refuse("Pick a party first"))
+    def file_dialog(title: str, folder: Path, label: str, verb: str, action) -> None:
+        """Pick a JSON file from `folder` and run `action(chase, path)` on it."""
+        with dialog(title) as d:
+            picked = ui.select(list_files(folder), label=label)
+            ui.button(verb, on_click=lambda: submit(d, action, chase, folder / f"{picked.value}.json")
+                      if picked.value else refuse(f"Pick a {label.lower()} first"))
 
     def save_dialog() -> None:
         def save() -> None:
@@ -193,7 +202,7 @@ def root() -> None:
     def participant_fields(p: Participant | None = None):
         """Every participant field. Returns a function giving them as a dict, or None (refused) if incomplete."""
         name = ui.input("Name", value=p.name if p else "")
-        side = ui.select({s: s.capitalize() for s in Side}, value=p.side if p else Side.PURSUER, label="Side")
+        side = ui.select(labelled(Side), value=p.side if p else Side.PURSUER, label="Side")
         dex = ui.number("DEX", value=p.dex if p else 50, precision=0)
         mov = ui.number("MOV", value=p.mov if p else 8, precision=0)
         speed = ui.number("Speed roll value", value=p.speed_value if p else 50, precision=0)
@@ -226,7 +235,7 @@ def root() -> None:
     def join_dialog() -> None:
         with dialog("Join mid-chase") as d:
             values = participant_fields()
-            result = ui.select({"npc": "Roll for an NPC", **{r: r.capitalize() for r in SpeedResult}},
+            result = ui.select({"npc": "Roll for an NPC", **labelled(SpeedResult)},
                                value="npc", label="Speed roll result")
             location = ui.number("Joins on location #", value=1, precision=0, min=1)
             ui.button("Join", on_click=lambda: (p := new_participant(values)) and not refuse_blank(location) and submit(
@@ -269,10 +278,11 @@ def root() -> None:
             ui.button("Obstacles…", on_click=obstacle_dialog).props("outline")
             ui.button("Locations…", on_click=location_dialog).props("outline")
         contact = chase.same_location() if chase.round else []
+        labels = location_options()
         with ui.row().classes("no-wrap overflow-x-auto w-full"):
             for i, loc in enumerate(chase.locations):
                 with ui.card().classes("min-w-32"):
-                    ui.label(f"{i + 1}. {loc.name}").classes("text-bold")
+                    ui.label(labels[i]).classes("text-bold")
                     if loc.description:
                         ui.label(loc.description).classes("text-grey-8")
                     if i in contact:
@@ -301,12 +311,12 @@ def root() -> None:
                    Hazard(name.value, skill.value, difficulty.value, notes.value, kind.value, hp, hp))
 
         with dialog("Obstacle") as d:
-            after = ui.select({i: f"{i + 1}. {loc.name}" for i, loc in enumerate(chase.locations)}, value=0,
+            after = ui.select(location_options(), value=0,
                               label="Obstacle after location")
             name = ui.input("Obstacle name")
-            kind = ui.select({k: k.capitalize() for k in HazardKind}, value=HazardKind.HAZARD, label="Type")
+            kind = ui.select(labelled(HazardKind), value=HazardKind.HAZARD, label="Type")
             skill = ui.input("Skill(s) to pass")
-            difficulty = ui.select({x: x.capitalize() for x in Difficulty}, value=Difficulty.REGULAR,
+            difficulty = ui.select(labelled(Difficulty), value=Difficulty.REGULAR,
                                    label="Difficulty")
             h_hp = ui.number("Barrier HP (barriers only)", precision=0, min=1)
             notes = ui.input("Notes")
@@ -338,7 +348,7 @@ def root() -> None:
             submit(d, chase.remove_location, at.value)
 
         with dialog("Locations") as d:
-            at = ui.select({**{i: f"{i + 1}. {loc.name}" for i, loc in enumerate(chase.locations)}, ends: "(end)"},
+            at = ui.select({**location_options(), ends: "(end)"},
                            value=0, label="Location")
             name = ui.input("Name")
             desc = ui.input("Description")
@@ -399,7 +409,7 @@ def root() -> None:
                     if p.is_passenger:
                         ui.label(f"rides in {p.vehicle}, no speed roll")
                         continue
-                    ui.toggle({r: r.capitalize() for r in SpeedResult}, value=p.speed_result,
+                    ui.toggle(labelled(SpeedResult), value=p.speed_result,
                               on_change=lambda e, n=p.name: act(chase.set_speed_result, n, e.value))
                     if not p.investigator:
                         ui.button("Roll", on_click=lambda n=p.name: act(chase.roll_speed, n)).props("outline")
@@ -417,7 +427,7 @@ def root() -> None:
             with ui.card().classes("w-full"):
                 ui.label("Everyone has acted this round: End round when ready.").classes("text-h6")
             return
-        with ui.card().classes("w-full").style("border: 4px solid #1565c0"):
+        with ui.card().classes("w-full").style(NOW_BORDER):
             ui.label(f"▶ {p.name}'s turn").classes("text-h5 text-bold")
             if not p.is_passenger:
                 ui.label(f"Movement actions left: {p.actions_left}/{chase.movement_actions(p)}")
@@ -494,16 +504,15 @@ def root() -> None:
                 ui.button("Add participant", icon="add", on_click=add_dialog)
             elif not chase.ended:
                 ui.button("Join mid-chase", icon="add", on_click=join_dialog)
-        turn = chase.current_turn()
-        contact = chase.same_location() if running else []
         for i, p in enumerate(chase.turn_order()):
-            card(p, i, p is turn, running and chase.had_turn(p.name), p.location in contact)
+            card(p, i)
 
-    def card(p: Participant, index: int, now: bool, done: bool, contact: bool) -> None:
+    def card(p: Participant, index: int) -> None:
         running = chase.round > 0
+        now, done = p is chase.current_turn(), chase.had_turn(p.name)
         c = ui.card().classes("w-full" + (" bg-grey-3" if done else ""))  # dimmed, text still AA
         if now:
-            c.style("border: 4px solid #1565c0")
+            c.style(NOW_BORDER)
         with c:
             with ui.row().classes("w-full items-center"):
                 ui.label(p.name).classes("text-h5 text-bold")
@@ -533,13 +542,7 @@ def root() -> None:
                     with ui.column().classes("gap-0"):
                         ui.label(label).classes("text-grey-8 text-sm")
                         ui.label(str(value)).classes("text-bold text-lg")
-            if p.is_passenger:
-                action = f" · passenger action {'ready' if p.passenger_action else 'used'}" if running else ""
-                ui.label(f"Rides in {p.vehicle}{action}")
-            badges = [b for b in chase.badges(p.name) if not b.startswith("passenger in")]
-            badges += ["Same location"] * contact + ["Delayed"] * (p.name in chase.delayed)
-            badges += ["May escape"] * (p.name in chase.may_escape)
-            if badges:
+            if badges := chase.badges(p.name):
                 with ui.row().classes("gap-2"):
                     for b in badges:
                         ui.badge(b, **BADGE)
