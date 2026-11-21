@@ -140,8 +140,7 @@ def root() -> None:
         with ui.button("File", icon="menu").props("flat color=white"), ui.menu():
             ui.menu_item("Load prepped chase…", lambda: file_dialog(
                 "Load prepped chase", CHASES, "Prepped chase", "Load", load_prep))
-            ui.menu_item("Import party…", lambda: file_dialog(
-                "Import party", PARTIES, "Party", "Import", import_party))
+            ui.menu_item("Import party…", party_dialog)
             ui.menu_item("New blank chase", lambda: act(new_chase, chase))
             ui.menu_item("Save as…", save_dialog)
             ui.separator()
@@ -154,6 +153,13 @@ def root() -> None:
             picked = ui.select(list_files(folder), label=label)
             ui.button(verb, on_click=lambda: submit(d, action, chase, folder / f"{picked.value}.json")
                       if picked.value else refuse(f"Pick a {label.lower()} first"))
+
+    def party_dialog() -> None:
+        with dialog("Import party") as d:
+            picked = ui.select(list_files(PARTIES), label="Party")
+            side = ui.toggle(labelled(Side), value=Side.FLEEING)
+            ui.button("Import", on_click=lambda: submit(d, import_party, chase, PARTIES / f"{picked.value}.json",
+                                                        side.value) if picked.value else refuse("Pick a party first"))
 
     def save_dialog() -> None:
         def save() -> None:
