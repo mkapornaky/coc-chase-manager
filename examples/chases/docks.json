@@ -1,0 +1,82 @@
+{
+  "version": 3,
+  "locations": [
+    {
+      "name": "Warehouse loading bay",
+      "description": "Crates stacked to the rafters, a forklift left running.",
+      "hazard_after": {
+        "name": "Falling crates",
+        "skill": "Dodge",
+        "difficulty": "regular",
+        "notes": "",
+        "kind": "hazard",
+        "hp": null,
+        "max_hp": null
+      }
+    },
+    {
+      "name": "Rail yard",
+      "description": "Freight cars shunting in the fog.",
+      "hazard_after": {
+        "name": "Moving freight train",
+        "skill": "Jump or DEX",
+        "difficulty": "hard",
+        "notes": "",
+        "kind": "hazard",
+        "hp": null,
+        "max_hp": null
+      }
+    },
+    {
+      "name": "Fish market",
+      "description": "Stalls, ice and shouting traders.",
+      "hazard_after": null
+    },
+    {
+      "name": "Pier 9",
+      "description": "",
+      "hazard_after": {
+        "name": "Locked gate",
+        "skill": "",
+        "difficulty": "regular",
+        "notes": "",
+        "kind": "barrier",
+        "hp": 10,
+        "max_hp": 10
+      }
+    },
+    {
+      "name": "Boathouse",
+      "description": "A rotten door, a motorboat inside.",
+      "hazard_after": null
+    }
+  ],
+  "npcs": [
+    {
+      "name": "Dock cultist",
+      "side": "pursuer",
+      "dex": 50,
+      "mov": 8,
+      "speed_value": 55,
+      "hp": 11,
+      "max_hp": 11,
+      "build": null,
+      "max_build": null,
+      "vehicle": null,
+      "notes": "Knife 45%"
+    },
+    {
+      "name": "Cult leader",
+      "side": "pursuer",
+      "dex": 60,
+      "mov": 8,
+      "speed_value": 60,
+      "hp": 12,
+      "max_hp": 12,
+      "build": null,
+      "max_build": null,
+      "vehicle": null,
+      "notes": ".38 revolver 40%"
+    }
+  ]
+}

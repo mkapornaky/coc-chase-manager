@@ -12,3 +12,5 @@ build/
 call_of_cthulhu_chase_rules.pdf
 autosave.json
 autosave.tmp
+/chases/
+/parties/
