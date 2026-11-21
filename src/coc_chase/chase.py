@@ -181,6 +181,7 @@ class Chase:
     escaped: list[str] = field(default_factory=list)
     may_escape: list[str] = field(default_factory=list)
     unable_to_join: list[str] = field(default_factory=list)  # pursuers too slow to join mid-chase
+    left_behind: list[Participant] = field(default_factory=list)  # dropped at establish; still saved as prep
     order: list[str] = field(default_factory=list)  # Keeper turn order; empty = by DEX
     round: int = 0  # 0 = not established yet
     slowest_mov: int = 0
@@ -217,6 +218,7 @@ class Chase:
         else:
             raise ValueError("unsupported chase file version")
         data["participants"] = [Participant(**p) for p in data["participants"]]
+        data["left_behind"] = [Participant(**p) for p in data.get("left_behind", [])]
         return cls(**data)
 
     @classmethod
@@ -310,7 +312,7 @@ class Chase:
 
         One-on-one (passengers aside) with the fleeing character faster: they escape, no chase is played.
         Otherwise faster fleeing characters are flagged in `may_escape`, and pursuers slower than the
-        slowest fleeing character are left behind (removed). The slowest pursuer starts on
+        slowest fleeing character are left behind (moved to `left_behind`). The slowest pursuer starts on
         `start_location`, the slowest fleeing character `start_range` ahead of the foremost pursuer.
         """
         pursuers = [p for p in self.participants if p.side == Side.PURSUER and not p.is_passenger]
@@ -328,6 +330,7 @@ class Chase:
         for p in pursuers:
             if p.adjusted_mov < slowest_fleeing:
                 self.participants.remove(p)
+                self.left_behind.append(p)
                 self.log_event(f"{p.name} is left behind")
         pursuers = [p for p in self.participants if p.side == Side.PURSUER and not p.is_passenger]
         slowest_pursuer = min((p.adjusted_mov for p in pursuers), default=fastest_pursuer)

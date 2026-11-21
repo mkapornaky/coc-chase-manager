@@ -172,3 +172,50 @@ def test_autosave_with_an_unknown_value_is_refused_naming_the_file(tmp_path):
     data = json.loads(Chase().to_json()) | {"sudden_caller": "dealer"}
     with pytest.raises(ValueError, match="autosave.json"):
         Chase.load(write(tmp_path / "autosave.json", data))
+
+
+def left_behind_chase() -> Chase:
+    """Fleeing MOV 8; pursuers MOV 6 (left behind at establish) and 9."""
+    chase = Chase()
+    chase.add(Participant("Harvey", "fleeing", dex=60, mov=8, speed_value=50))
+    chase.add(Participant("Ghoul", "pursuer", dex=40, mov=6, speed_value=50, hp=13, max_hp=13))
+    chase.add(Participant("Hound", "pursuer", dex=70, mov=9, speed_value=50))
+    for name in ("Harvey", "Ghoul", "Hound"):
+        chase.set_speed_result(name, "success")
+    chase.establish()
+    return chase
+
+
+def test_save_as_after_establish_keeps_pursuers_left_behind(tmp_path):
+    chase = left_behind_chase()
+    chase.investigators = ["Harvey"]
+    save_prep(chase, tmp_path / "prep.json")
+    npcs = json.loads((tmp_path / "prep.json").read_text())["npcs"]
+    assert sorted(n["name"] for n in npcs) == ["Ghoul", "Hound"]
+    ghoul = next(n for n in npcs if n["name"] == "Ghoul")
+    assert (ghoul["hp"], ghoul["mov"]) == (13, 6)
+    assert "speed_result" not in ghoul and "location" not in ghoul
+
+
+def test_left_behind_pursuer_is_out_of_the_running_chase():
+    chase = left_behind_chase()
+    assert [p.name for p in chase.left_behind] == ["Ghoul"]
+    assert [p.name for p in chase.dex_order()] == ["Hound", "Harvey"]
+    assert chase.targets("Harvey") == ["Hound"]
+    assert chase.slowest_mov == 8
+    with pytest.raises(StopIteration):
+        chase.get("Ghoul")
+
+
+def test_left_behind_round_trips_and_undo_restores_the_pursuer():
+    chase = left_behind_chase()
+    assert chase == Chase.from_json(chase.to_json())
+    chase.undo()
+    assert chase.left_behind == []
+    assert "Ghoul" in [p.name for p in chase.participants]
+
+
+def test_autosave_without_left_behind_loads():
+    data = json.loads(Chase().to_json())
+    del data["left_behind"]
+    assert Chase.from_json(json.dumps(data)).left_behind == []

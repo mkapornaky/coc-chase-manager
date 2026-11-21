@@ -23,7 +23,8 @@ def save_prep(chase: Chase, path: Path) -> None:
     data = {
         "version": FORMAT_VERSION,
         "locations": [asdict(loc) for loc in chase.locations],
-        "npcs": [_prep_participant(p) for p in chase.participants if p.name not in chase.investigators],
+        "npcs": [_prep_participant(p) for p in chase.participants + chase.left_behind
+                 if p.name not in chase.investigators],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
