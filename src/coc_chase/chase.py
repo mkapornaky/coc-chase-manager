@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass, field, fields, replace
 from enum import StrEnum
 from pathlib import Path
 
-FORMAT_VERSION = 3  # 1: locations, descriptions and hazards kept apart; 2: Chase.investigators list. Both still read
+FORMAT_VERSION = 3
+READABLE_VERSIONS = (1, 2, FORMAT_VERSION)  # 1: hazards kept apart; 2: Chase.investigators list
 
 
 
@@ -29,6 +30,7 @@ def mutation(fn):
             result = fn(self, *args, **kwargs)
         finally:
             self._in_mutation = False
+        self._forget_stale_ties()
         self.history.append((snapshot, self.last_entries))
         self.save()
         return result
@@ -156,7 +158,7 @@ class Participant:
     vehicle: str | None = None  # passenger in this vehicle: no speed roll, rides along, 1 action
     passenger_action: bool = False  # passengers only: this round's one action is still unused
     notes: str = ""  # Keeper's free text: skills, conditions
-    investigator: bool = False  # player character: never saved as an NPC, players roll their own dice
+    investigator: bool = False  # a player's character: never saved as an NPC, players roll their own dice
 
     def __post_init__(self):  # values loaded from JSON arrive as plain strings
         self.side = Side(self.side)
@@ -210,7 +212,7 @@ class Chase:
     def from_json(cls, text: str) -> "Chase":
         data = json.loads(text)
         version = data.pop("version", None)
-        if version not in (1, 2, FORMAT_VERSION):
+        if version not in READABLE_VERSIONS:
             raise ValueError("unsupported chase file version")
         if version == 1:
             descriptions = data.pop("descriptions", {})
@@ -479,7 +481,7 @@ class Chase:
         """Highest DEX first, unless the Keeper or an opposed DEX roll set `order`.
 
         Anyone missing from `order` (e.g. later joiners) goes right after the last participant with
-        the same or a higher DEX (first if there is none); the ordered keep their relative order.
+        the same DEX, else after the last with a higher DEX, else first; the ordered keep their relative order.
         """
         by_dex = sorted(self.participants, key=lambda p: -p.dex)
         if not self.order:
@@ -487,7 +489,8 @@ class Chase:
         result = [p for name in self.order for p in self.participants if p.name == name]
         for p in by_dex:
             if p.name not in self.order:
-                after = [i for i, o in enumerate(result) if o.dex >= p.dex]
+                after = ([i for i, o in enumerate(result) if o.dex == p.dex]
+                         or [i for i, o in enumerate(result) if o.dex > p.dex])
                 result.insert(after[-1] + 1 if after else 0, p)
         return result
 
@@ -501,6 +504,13 @@ class Chase:
             groups.setdefault(p.dex, []).append(p.name)
         resolved = [set(t) for t in self.resolved_ties]
         return [g for g in groups.values() if len(g) > 1 and set(g) not in resolved]
+
+    def _forget_stale_ties(self) -> None:
+        """Drop resolved ties whose exact membership no longer shares a DEX (a join, DEX edit or removal)."""
+        groups: dict[int, set[str]] = {}
+        for p in self.participants:
+            groups.setdefault(p.dex, set()).add(p.name)
+        self.resolved_ties = [t for t in self.resolved_ties if set(t) in groups.values()]
 
     @mutation
     def reorder(self, names: list[str]) -> None:
@@ -531,6 +541,7 @@ class Chase:
         order = [p.name for p in self.dex_order()]
         groups = [g for g in self.dex_ties() if not any(self.get(n).investigator for n in g)]
         if not groups:
+            self.log_event("No NPC DEX ties to roll")
             return
         for group in groups:
             results = {name: [] for name in group}

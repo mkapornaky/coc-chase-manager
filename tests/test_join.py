@@ -78,3 +78,12 @@ def test_without_a_set_order_highest_dex_goes_first():
     for name, d in (("Harvey", 40), ("Brian", 70), ("Cultist", 30)):
         chase.add(Participant(name, "fleeing", dex=d, mov=8, speed_value=50))
     assert [p.name for p in chase.dex_order()] == ["Brian", "Harvey", "Cultist"]
+
+
+def test_joiner_goes_right_after_the_participant_sharing_their_dex():
+    chase = Chase()
+    for name, d in (("A", 50), ("B", 80)):
+        chase.add(Participant(name, "fleeing", dex=d, mov=8, speed_value=50))
+    chase.reorder(["A", "B"])
+    chase.add(Participant("New", "pursuer", dex=50, mov=8, speed_value=50))
+    assert [p.name for p in chase.dex_order()] == ["A", "New", "B"]

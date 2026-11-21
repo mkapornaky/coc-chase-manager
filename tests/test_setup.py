@@ -189,3 +189,17 @@ def test_renaming_keeps_a_resolved_tie_resolved():
     chase.keep_dex_order(["A", "B"])
     chase.edit_participant("A", name="Alf")
     assert chase.dex_ties() == []
+
+
+def test_a_tie_that_regains_its_old_members_is_flagged_again():
+    chase = tied_chase(("A", 50), ("B", 50))
+    chase.keep_dex_order(["A", "B"])
+    chase.add(Participant("C", "pursuer", dex=50, mov=8, speed_value=50))
+    chase.remove("C")
+    assert chase.dex_ties() == [["A", "B"]]
+
+
+def test_rolling_with_no_npc_ties_is_logged():
+    chase = tied_chase(("Inv Harvey", 50), ("Cultist", 50))
+    chase.roll_dex_ties()
+    assert chase.log[-1] == "R0: No NPC DEX ties to roll"

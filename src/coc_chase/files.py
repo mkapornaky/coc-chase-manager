@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from coc_chase.chase import FORMAT_VERSION, Chase, Location, Participant, locations_from_v1, mutation
+from coc_chase.chase import FORMAT_VERSION, READABLE_VERSIONS, Chase, Location, Participant, locations_from_v1, mutation
 
 # Live state that never goes into a prep file (nor `investigator`: prep files hold NPCs only).
 LIVE = ("speed_result", "location", "actions_left", "debt", "pedal", "pedal_penalty", "navigated",
@@ -34,7 +34,7 @@ def _read(path: Path, build):
     """Parse a file with build(data). Any problem with it becomes one ValueError naming the file."""
     try:
         data = json.loads(path.read_text())
-        if data.get("version") not in (1, 2, FORMAT_VERSION):
+        if data.get("version") not in READABLE_VERSIONS:
             raise ValueError(f"unsupported version {data.get('version')!r}")
         return build(data)
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
