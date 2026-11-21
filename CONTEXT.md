@@ -52,3 +52,13 @@ _Avoid_: Track (when you mean the structure), map
 
 **Branch**:
 A route leaving a fork. Participants on different branches are still in the same chase, with one shared round and turn order.
+
+**Round**:
+One pass through the turn order, in which every participant gets a turn. Movement actions are refreshed at the start of each round.
+
+**Turn**:
+One participant's chance to act within a round, spending their movement actions on moving, obstacles or conflict.
+
+**Turn order**:
+The order participants take their turns in each round. It starts sorted by DEX, then changes through DEX tie rolls, the Keeper reordering by hand, and delays.
+_Avoid_: DEX order (except to mean "sorted by DEX", as in DEX tie)
