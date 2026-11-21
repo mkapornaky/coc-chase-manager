@@ -13,20 +13,22 @@ FORMAT_VERSION = 1
 def mutation(fn):
     """Wrap every state-changing Chase method: snapshot for undo, run, autosave.
 
-    The method itself writes its log line with self.log_event(...).
-    Nested calls (a mutation calling another, e.g. a dice roll) share the outer snapshot.
+    The method itself writes its log entries with self.log_event(...); they are kept in
+    last_entries so the UI can show them. Nested calls (a mutation calling another,
+    e.g. a dice roll) share the outer snapshot and entries.
     """
     @functools.wraps(fn)
     def wrapper(self, *args, **kwargs):
         if self._in_mutation:
             return fn(self, *args, **kwargs)
         snapshot = self.to_json()
+        self.last_entries = []
         self._in_mutation = True
         try:
             result = fn(self, *args, **kwargs)
         finally:
             self._in_mutation = False
-        self.history.append(snapshot)
+        self.history.append((snapshot, self.last_entries))
         self.save()
         return result
     return wrapper
@@ -127,7 +129,8 @@ class Chase:
     investigators: list[str] = field(default_factory=list)  # names imported from a party; not saved as NPCs
     log:list[str] = field(default_factory=list)
     # Not state (compare=False): excluded from JSON, equality and undo snapshots.
-    history: list[str] = field(default_factory=list, repr=False, compare=False)
+    history: list[tuple[str, list[str]]] = field(default_factory=list, repr=False, compare=False)
+    last_entries: list[str] = field(default_factory=list, repr=False, compare=False)  # by the last mutation
     autosave: Path | None = field(default=None, repr=False, compare=False)
     rng: random.Random = field(default_factory=random.Random, repr=False, compare=False)
     _in_mutation: bool = field(default=False, repr=False, compare=False)
@@ -161,13 +164,18 @@ class Chase:
             tmp.replace(self.autosave)  # atomic: a crash mid-write keeps the old file
 
     def log_event(self, text: str) -> None:
-        self.log.append(f"R{self.round}: {text}")
+        entry = f"R{self.round}: {text}"
+        self.log.append(entry)
+        self.last_entries.append(entry)
 
-    def undo(self) -> None:
+    def undo(self) -> list[str] | None:
+        """Revert the last mutation. Returns the log entries it wrote, or None if there is nothing to undo."""
         if not self.history:
-            return
-        self.replace_with(Chase.from_json(self.history.pop()))
+            return None
+        snapshot, entries = self.history.pop()
+        self.replace_with(Chase.from_json(snapshot))
         self.save()
+        return entries
 
     def replace_with(self, other: "Chase") -> None:
         """Take over all of `other`'s state; history, autosave path and rng stay. Not logged or snapshotted."""
