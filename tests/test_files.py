@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from coc_chase.chase import Chase, Hazard, Location, Participant
+from coc_chase.chase import Chase, Hazard, Location, Participant, Side
 from coc_chase.files import import_party, list_files, load_prep, new_chase, save_prep
 
 
@@ -36,7 +36,7 @@ def test_loading_a_chase_and_importing_a_party_is_ready_to_establish(tmp_path):
     save_prep(prepped_chase(), tmp_path / "docks.json")
     chase = Chase()
     load_prep(chase, tmp_path / "docks.json")
-    import_party(chase, write(tmp_path / "party.json", PARTY))
+    import_party(chase, write(tmp_path / "party.json", PARTY), Side.FLEEING)
     assert [p.name for p in chase.participants] == ["Cultist", "Harvey"]
     chase.set_speed_result("Cultist", "success")
     chase.set_speed_result("Harvey", "success")
@@ -46,7 +46,7 @@ def test_loading_a_chase_and_importing_a_party_is_ready_to_establish(tmp_path):
 
 def test_loaded_prep_carries_no_live_state(tmp_path):
     chase = prepped_chase()
-    import_party(chase, write(tmp_path / "party.json", PARTY))
+    import_party(chase, write(tmp_path / "party.json", PARTY), Side.FLEEING)
     chase.set_speed_result("Cultist", "success")
     chase.set_speed_result("Harvey", "success")
     chase.establish()
@@ -103,9 +103,18 @@ def test_saved_chase_file_is_version_3_with_hazards_on_their_locations(tmp_path)
     assert data["locations"][1]["hazard_after"]["name"] == "Gate"
 
 
+def test_same_party_imports_on_either_side_regardless_of_file(tmp_path):
+    path = write(tmp_path / "party.json", PARTY)
+    pursuing, fleeing = Chase(), Chase()
+    import_party(pursuing, path, Side.PURSUER)
+    import_party(fleeing, path, Side.FLEEING)
+    assert pursuing.get("Harvey").side == Side.PURSUER
+    assert fleeing.get("Harvey").side == Side.FLEEING
+
+
 def test_version_2_party_imports(tmp_path):
     chase = Chase()
-    import_party(chase, write(tmp_path / "party.json", PARTY | {"version": 2}))
+    import_party(chase, write(tmp_path / "party.json", PARTY | {"version": 2}), Side.FLEEING)
     assert chase.get("Harvey").investigator
 
 
@@ -144,7 +153,7 @@ BAD_SIDE = {"name": "Cultist", "side": "persuer", "dex": 50, "mov": 8, "speed_va
     json.dumps({"version": 1, "locations": ["Road"]}),
     json.dumps({"version": 1, "locations": [], "hazards": {"x": {"name": "Mud"}}}),
     json.dumps({"version": 1, "locations": [], "npcs": [{"name": "Cultist", "speed": 50}]}),
-    json.dumps({"version": 1, "locations": [], "npcs": [BAD_SIDE], "investigators": [BAD_SIDE]}),
+    json.dumps({"version": 1, "locations": [], "npcs": [BAD_SIDE], "investigators": [{"name": "Cultist", "speed": 50}]}),
     json.dumps({"version": 1, "locations": [{"name": "Road"}], "hazards": {"0": {"name": "Mud", "kind": "bog"}}}),
 ])
 def test_invalid_chase_file_raises_value_error_and_leaves_chase_alone(tmp_path, content):
@@ -155,7 +164,7 @@ def test_invalid_chase_file_raises_value_error_and_leaves_chase_alone(tmp_path, 
     with pytest.raises(ValueError, match="bad.json"):
         load_prep(chase, path)
     with pytest.raises(ValueError, match="bad.json"):
-        import_party(chase, path)
+        import_party(chase, path, Side.FLEEING)
     assert chase.to_json() == before
 
 

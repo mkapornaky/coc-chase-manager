@@ -54,14 +54,14 @@ cp examples/parties/*.json parties/
 
 Prepped chases never store positions, rounds or the log, so you can reuse one as often as you like.
 
-You write party rosters by hand. Only `name`, `side`, `dex`, `mov` and `speed_value` are required:
+You write party rosters by hand. Only `name`, `dex`, `mov` and `speed_value` are required. There is no `side`: you pick pursuing or fleeing when you import, so one roster serves both (an old `side` field is ignored):
 
 ```json
 {
   "version": 3,
   "investigators": [
-    {"name": "Harvey Walters", "side": "fleeing", "dex": 55, "mov": 7, "speed_value": 60, "hp": 11, "max_hp": 11},
-    {"name": "Bessie Cooper", "side": "fleeing", "dex": 70, "mov": 8, "speed_value": 75, "notes": "Drive Auto 60"}
+    {"name": "Harvey Walters", "dex": 55, "mov": 7, "speed_value": 60, "hp": 11, "max_hp": 11},
+    {"name": "Bessie Cooper", "dex": 70, "mov": 8, "speed_value": 75, "notes": "Drive Auto 60"}
   ]
 }
 ```

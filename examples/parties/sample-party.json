@@ -1,7 +1,7 @@
 {
   "version": 3,
   "investigators": [
-    {"name": "Ada Mercer", "side": "fleeing", "dex": 65, "mov": 8, "speed_value": 60, "hp": 11, "max_hp": 11, "notes": "Dodge 40%"},
-    {"name": "Tom Hale", "side": "fleeing", "dex": 50, "mov": 7, "speed_value": 70, "hp": 13, "max_hp": 13, "notes": "Drive Auto 55%"}
+    {"name": "Ada Mercer", "dex": 65, "mov": 8, "speed_value": 60, "hp": 11, "max_hp": 11, "notes": "Dodge 40%"},
+    {"name": "Tom Hale", "dex": 50, "mov": 7, "speed_value": 70, "hp": 13, "max_hp": 13, "notes": "Drive Auto 55%"}
   ]
 }

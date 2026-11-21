@@ -4,7 +4,8 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from coc_chase.chase import FORMAT_VERSION, READABLE_VERSIONS, Chase, Location, Participant, locations_from_v1, mutation
+from coc_chase.chase import (FORMAT_VERSION, READABLE_VERSIONS, Chase, Location, Participant, Side, locations_from_v1,
+                             mutation)
 
 # Live state that never goes into a prep file (nor `investigator`: prep files hold NPCs only).
 LIVE = ("speed_result", "location", "actions_left", "debt", "pedal", "pedal_penalty", "navigated",
@@ -83,8 +84,11 @@ def load_prep(chase: Chase, path: Path) -> None:
 
 
 @mutation
-def import_party(chase: Chase, path: Path) -> None:
-    """Add a party roster's investigators to the current chase (undoable)."""
-    for p in _read(path, lambda data: _participants(data["investigators"])):
+def import_party(chase: Chase, path: Path, side: Side) -> None:
+    """Add a party roster's investigators to the current chase, all on `side` (undoable).
+
+    The side is chosen at import, not stored: one roster serves both pursuing and fleeing chases.
+    """
+    for p in _read(path, lambda data: _participants([i | {"side": side} for i in data["investigators"]])):
         p.investigator = True
         chase.add(p)
