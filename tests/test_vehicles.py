@@ -98,7 +98,7 @@ def test_passenger_ignored_for_slowest_mov_rides_along_and_acts_once_in_dex_orde
     assert (harvey.actions_left, chase.get("Police 1").actions_left, hilda.actions_left) == (1, 2, 0)
     assert chase.movement_actions(hilda) == 0 and hilda.passenger_action
     assert hilda.location == harvey.location
-    assert chase.badges("Hilda") == ["passenger in Harvey"]
+    assert chase.badges("Hilda") == ["passenger in Harvey, action ready"]
     assert [p.name for p in chase.dex_order()] == ["Harvey", "Hilda", "Police 1"]
     chase.move("Harvey")
     assert hilda.location == harvey.location
@@ -235,3 +235,13 @@ def test_acceleration_ends_clear_pedal_state(end):
     end(chase)
     assert chase.get("Police 1").pedal == 0
     assert not any(b.startswith("pedal") for b in chase.badges("Police 1"))
+
+
+def test_passenger_badge_shows_the_vehicle_and_whether_the_action_is_used():
+    setup = Chase()
+    setup.add(car("Harvey", "fleeing", dex=70, mov=14))
+    setup.add(Participant("Hilda", "fleeing", dex=60, mov=7, speed_value=0, vehicle="Harvey"))
+    assert setup.badges("Hilda") == ["passenger in Harvey"]
+    chase = passenger_chase()
+    chase.navigate("Hilda", True)
+    assert chase.badges("Hilda") == ["passenger in Harvey, action used"]

@@ -50,3 +50,15 @@ def test_editing_to_an_unknown_side_is_refused_and_changes_nothing():
     with pytest.raises(ValueError):
         chase.edit_participant("Harvey", side="persuer", dex=70)
     assert chase.to_json() == before
+
+
+def test_editing_a_location_carries_passengers_in_one_undo_step():
+    chase = passenger_chase()
+    car = next(p for p in chase.participants if p.is_vehicle)
+    rider = next(p for p in chase.participants if p.vehicle == car.name)
+    start = car.location
+    chase.edit_participant(car.name, location=start + 3, debt=1)
+    assert (car.location, rider.location, car.debt) == (start + 3, start + 3, 1)
+    assert chase.log[-1].endswith(f"location {chase.locations[start + 3].name}, debt 1")
+    chase.undo()
+    assert chase.get(car.name).location == start and chase.get(car.name).debt == 0
